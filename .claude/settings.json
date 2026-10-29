@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch"
+    ],
+    "ask": [
+      "Bash(terraform apply:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(syndicate deploy:*)",
+      "Bash(syndicate update:*)",
+      "Bash(syndicate clean:*)",
+      "Bash(aws s3 sync:*)",
+      "Bash(aws s3 rm:*)",
+      "Bash(git push:*)",
+      "PowerShell(terraform apply:*)",
+      "PowerShell(terraform destroy:*)",
+      "PowerShell(syndicate deploy:*)",
+      "PowerShell(syndicate update:*)",
+      "PowerShell(syndicate clean:*)",
+      "PowerShell(aws s3 sync:*)",
+      "PowerShell(aws s3 rm:*)",
+      "PowerShell(git push:*)"
+    ],
+    "deny": [
+      "Read(**/.env*)",
+      "Read(**/*.tfvars)",
+      "Read(**/*.tfvars.json)",
+      "Read(**/*.tfstate*)",
+      "Read(**/tfplan)",
+      "Read(**/*.tfplan)"
+    ]
+  }
+}
