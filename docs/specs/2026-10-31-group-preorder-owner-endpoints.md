@@ -268,6 +268,7 @@ Owner exclusion:
 - **Renaming the gateway resource** removes `/guest/group/{groupReservationId}/sessions` on the next deployment; it never had a Lambda route.
 - **Exception hierarchy:** not-found exceptions derive from `ValidationException`; catching `ValidationException` first would turn 404s into 400s.
 - **Submit merges into `Canceled` and `Confirmed` order lines.** Per the merge rule (keep the existing line's `State`), group dishes added to a line the waiter has canceled stay `Canceled`, so they are effectively lost; quantity added to a `Confirmed` line becomes confirmed without the waiter confirming it. Appending a separate `Pending` line is not a fix: waiter confirm/cancel (`OrderService.ConfirmDishInOrder` / `CancelDishInOrder`) takes the first line with the `dishId`, so the order model assumes one line per `dishId`. Kept as specified by the user's decision; see Open questions.
+- **Handler check order: path parameter before `sub`.** The four handlers of this spec return 400 for a missing path parameter before checking `sub` (401); a request missing both gets 400. This follows the pre-existing `DeleteGuestSessionHandler`, while other Cognito handlers in the project (for example `CancelPreOrderDishHandler`, `GetReservationByIdHandler`) check `sub` first. Not pinned by tests; unreachable through API Gateway, which always passes path parameters and rejects requests without a valid token at the `cognito_authorizer`. Recorded only.
 - **Cognito failure in the snapshot returns 500.** The owner's `given_name` falls back to the stored `GuestName` only when the user or attribute is not found. A Cognito error (network, throttling) is not caught and becomes 500 for `GET .../sessions`, and for `DELETE` after the session has already been deleted. Kept as is by the user's decision, consistent with other endpoints.
 
 ## Open questions
@@ -316,6 +317,13 @@ Owner exclusion:
 | 2026-10-31 | Scope extended: `docs/architecture.md` section 12, question 6 also names `GET /guest/groups/{groupReservationId}/sessions` as an owner-only `/guest/` endpoint needing a Cognito token. Status set back to Draft for re-approval | User |
 | 2026-10-31 | The note "`EnsureGroupIsActive` duplicated in two services" is resolved by simplify fix A (`GroupPreOrderGuards`) | Orchestrator (check) |
 | 2026-10-31 | Updated spec (section 12 question 6 in scope, new Risks and Open questions 6–7) re-approved | User |
+| 2026-10-31 | `/simplify` on the staged unit tests: review by the Orchestrator (read-only), agreed fixes go to `unit-test-developer` as review feedback | User |
+| 2026-10-31 | Test simplify fix agreed: remove the unused session-list setup from the AC9 (S12) owner-exclusion service tests (production reads only `CountJoinedGuestsByGroupReservationIdAsync`); note that owner exclusion itself is covered by `GuestSessionRepositoryTests` | User |
+| 2026-10-31 | Test simplify findings not taken: shared `GroupPreOrderTestData.cs` builders for the two service test classes; one `[Theory]` per handler test class for exception mapping; `[MemberData]` for the 401 cases | User |
+| 2026-10-31 | The shared test helper `Tests/Handlers/HandlerTestHelpers.cs` (request builders and response checks used by the four handler test classes; not named in "Affected Lambdas and files") is accepted as is | User |
+| 2026-10-31 | Handler check order (path parameter 400 before `sub` 401) kept as is and recorded under Risks only; no code or test change | User |
+| 2026-10-31 | The AC9 test cleanup by `unit-test-developer` is approved; build and tests to be run | User |
+| 2026-10-31 | After the AC9 test cleanup: `dotnet build` 0 errors (no warnings in this task's test files); `dotnet test Tests/APIHandler.Tests.csproj` 289/289 passed; `GuestSessionServiceTests` 90/90, `GroupReservationServiceTests` 39/39 | Orchestrator (run) |
 
 ## Status
 
