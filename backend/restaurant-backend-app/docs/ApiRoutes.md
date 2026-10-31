@@ -1110,7 +1110,7 @@ Response: `200 OK`
   "status": "string"
 }
 ```
-### `POST` /guest-sessions/{guestSessionId}/dishes
+### `POST` /guest/sessions/{guestSessionId}/dishes
 Request body:
 ```json
 {
@@ -1125,7 +1125,7 @@ Response: 200 OK
 }
 ```
 
-### `DELETE` /guest-sessions/{guestSessionId}/dishes
+### `DELETE` /guest/sessions/{guestSessionId}/dishes
 Request body:
 ```json
 {

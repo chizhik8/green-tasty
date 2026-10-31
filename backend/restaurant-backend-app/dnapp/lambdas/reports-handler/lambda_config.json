@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "name": "reports-handler",
-  "func_name": "ReportHandler::ReportHandler.Function::FunctionHandler",
+  "func_name": "ReportsHandler::ReportsHandler.Function::FunctionHandler",
   "resource_type": "lambda",
   "iam_role_name": "reports-handler-role",
   "runtime": "dotnet10",
