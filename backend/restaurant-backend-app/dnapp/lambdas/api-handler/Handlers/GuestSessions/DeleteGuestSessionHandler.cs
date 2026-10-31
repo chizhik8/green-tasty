@@ -29,8 +29,8 @@ public class DeleteGuestSessionHandler : IApiRequestHandler
             return ResponseBuilder.CreateErrorResponse(400, "Missing 'guestSessionId' in path parameters.", context.Logger);
         }
 
-        if (request.RequestContext?.Authorizer?.Claims == null ||
-            !request.RequestContext.Authorizer.Claims.TryGetValue("sub", out var userId))
+        string? userId = UserContextHelper.GetAuthenticatedUserId(request);
+        if (userId is null)
         {
             return ResponseBuilder.CreateErrorResponse(401, "Unauthorized.", context.Logger);
         }
@@ -38,7 +38,7 @@ public class DeleteGuestSessionHandler : IApiRequestHandler
         try
         {
             var updatedSnapshot = await _guestSessionService.DeleteGuestSessionAsync(userId, groupReservationId, guestSessionId);
-            return ResponseBuilder.CreateSuccessResponse(updatedSnapshot);
+            return ResponseBuilder.CreateJsonResponse(200, updatedSnapshot);
         }
         catch (GroupReservationNotFoundException ex)
         {

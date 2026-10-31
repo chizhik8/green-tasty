@@ -117,7 +117,7 @@ Group pre-order connects three actors: a signed-in reservation owner, anonymous 
 
 **The guest builds a cart.** Calls on a specific session send `Authorization: Bearer <guest session token>`, set by [guest-sessions.service.ts](../frontend/restaurant-frontend-app/src/app/services/guest-sessions/guest-sessions.service.ts). Examples are reading the session, adding or removing dishes, reading the menu, and submitting the cart. The gateway does not check these calls (`NONE`); the handler checks them through `IGuestAuthorizationService`.
 
-**The owner has no session yet.** The `GuestSession` model can also represent the owner: `IsOwnerSession` and `OwnerUserId` exist, and reading such a session shows the owner's `given_name` from Cognito. `GuestSessionService.CreateGroupOwnerSessionAsync` creates such a session, but nothing in the code calls it, so today only guests have sessions.
+**The owner gets a session on request.** The `GuestSession` model can also represent the owner: `IsOwnerSession` and `OwnerUserId` exist, and reading such a session shows the owner's `given_name` from Cognito. `GET /reservations/{reservationId}/guest-session-id` returns the owner's session id and creates the session on the first call, while the group is `Open` and the reservation is `Reserved` (`GuestSessionService.GetOrCreateOwnerSessionIdAsync`). The owner session has no guest token, so the owner cannot use the token-authorized cart endpoints with it yet. Owner sessions are not counted as joined guests in the guest limit or the participant count.
 
 **The owner manages participants.** `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` lets the owner remove a participant. It is protected by Cognito, and the service checks that the caller owns the reservation.
 
@@ -125,10 +125,10 @@ Group pre-order connects three actors: a signed-in reservation owner, anonymous 
 
 | Endpoint | Homework level | Status |
 |---|---|---|
-| `GET /guest/groups/{groupReservationId}/sessions` | 1 | Not implemented: no handler or route. The gateway has a Cognito-protected resource at `/guest/group/…` (singular) |
-| `GET /reservations/{reservationId}/guest-session-id` | 2 | Not implemented: described only in `ApiRoutes.md` |
-| `POST /group-reservations/{groupReservationId}/submit` | 2 | Not implemented: described only in `ApiRoutes.md` |
-| `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` | 3 | Implemented: `DeleteGuestSessionHandler` → `GuestSessionService.DeleteGuestSessionAsync`, Cognito-protected |
+| `GET /guest/groups/{groupReservationId}/sessions` | 1 | Implemented: `GetGroupSessionsHandler` → `GuestSessionService.GetGroupSessionsAsync`, Cognito-protected, owner only |
+| `GET /reservations/{reservationId}/guest-session-id` | 2 | Implemented: `GetOwnerGuestSessionIdHandler` → `GuestSessionService.GetOrCreateOwnerSessionIdAsync`, Cognito-protected, owner only |
+| `POST /group-reservations/{groupReservationId}/submit` | 2 | Implemented: `SubmitGroupReservationHandler` → `GroupReservationService.SubmitGroupReservationAsync`, Cognito-protected, owner only. The order and group updates are two separate writes, not a transaction |
+| `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` | 3 | Implemented: `DeleteGuestSessionHandler` → `GuestSessionService.DeleteGuestSessionAsync`, Cognito-protected, owner only; returns the same group snapshot as `GET …/sessions` |
 
 Update this table when one of these endpoints changes.
 
@@ -160,7 +160,7 @@ Role checks happen in some handlers, which read `cognito:groups` through `RoleHe
 
 ### 5.3 Open routes
 
-28 of the 67 gateway methods are `NONE`. Most are expected to be public:
+28 of the 69 gateway methods are `NONE`. Most are expected to be public:
 
 - reading locations, dishes, feedback and available tables;
 - `POST /register` and `POST /signin`;
@@ -226,20 +226,20 @@ The shared `lambda-basic-execution` policy grants S3, DynamoDB, Cognito admin, S
 
 Three artifacts describe the API, and a change to it must reach all three:
 
-1. **[RouteRegistry.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Routing/RouteRegistry.cs)** defines what the Lambda can serve (66 routes).
-2. **The top-level [deployment_resources.json](../backend/restaurant-backend-app/deployment_resources.json)** defines what the gateway exposes and with which authorizer (67 methods).
+1. **[RouteRegistry.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Routing/RouteRegistry.cs)** defines what the Lambda can serve (69 routes).
+2. **The top-level [deployment_resources.json](../backend/restaurant-backend-app/deployment_resources.json)** defines what the gateway exposes and with which authorizer (69 methods).
 3. **[docs/ApiRoutes.md](../backend/restaurant-backend-app/docs/ApiRoutes.md)** is the human-readable contract the frontend is written against. A Swagger UI generated from the gateway definition lives in `swagger_src/` ([GenerateSwagger.md](../backend/restaurant-backend-app/docs/GenerateSwagger.md)).
 
-Today the first two differ in one place. The gateway has `GET /guest/group/{groupReservationId}/sessions`, with a singular `group`, and no Lambda route matches it.
+Today the first two agree: every gateway method has a matching Lambda route. The former singular gateway path `/guest/group/{groupReservationId}/sessions` was renamed to `/guest/groups/{groupReservationId}/sessions`, which now has a route.
 
-`ApiRoutes.md` also describes endpoints that exist in neither the gateway nor `RouteRegistry`: the planned group pre-order endpoints listed in [section 4.4](#44-group-pre-order), and `GET /group-reservations/{groupReservationId}/status`. The implemented status endpoint is `GET /guest/groups/{groupReservationId}/status`.
+`ApiRoutes.md` also describes an endpoint that exists in neither the gateway nor `RouteRegistry`: `GET /group-reservations/{groupReservationId}/status`. The implemented status endpoint is `GET /guest/groups/{groupReservationId}/status`.
 
 ### 7.2 Request and response conventions
 
 - Request and response bodies are JSON. Path parameters come from `{…}` segments in the route template.
 - Plain errors have the shape `{ "error": "<message>" }`. Some success responses are `{ "message": "<text>" }`, and others return the resource itself.
 - Domain validation errors in group pre-order return status `400` with a body like `{ "message": "...", "errorCode": "GuestSessionExpired" }`. The C# record is `ErrorCodeResponse(Message, ErrorCode)` ([ErrorCodeResponse.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Models/ErrorCodeResponse.cs)). `ResponseBuilder.CreateJsonResponse` serializes it with camelCase property names, and the enum is written as a string. The possible `errorCode` values are `GroupReservationExpired`, `GroupReservationSubmitted`, `GuestLimitExceeded`, `GuestSessionExpired` and `Unknown`.
-- **CORS.** The gateway enables CORS (`enable_cors`) on 46 of its 49 resources. The three exceptions are `/tables/{id}`, `/locations/{locationId}/tables/all` and `/locations/{locationId}/dishes/{dishId}`. The Lambda adds `Access-Control-Allow-Origin: *` and allows the headers `Content-Type` and `Authorization`.
+- **CORS.** The gateway enables CORS (`enable_cors`) on 48 of its 51 resources. The three exceptions are `/tables/{id}`, `/locations/{locationId}/tables/all` and `/locations/{locationId}/dishes/{dishId}`. The Lambda adds `Access-Control-Allow-Origin: *` and allows the headers `Content-Type` and `Authorization`.
 
 ## 8. Environments
 
@@ -311,12 +311,12 @@ These points came up while checking the repository and could not be resolved fro
 3. `POST /feedback` is open and takes the user id from the request body. The role check in [CreateFeedbackHandler.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Handlers/Feedbacks/CreateFeedbackHandler.cs) reads `userRole is not null or Roles.Customer`, which rejects any user that has a role. What was the intended rule?
 4. No code assigns the `Admin` group. How are admins created — by hand in the Cognito console?
 5. `GET /reservations/{reservationId}/invite-token` checks only that the caller is signed in, not that the caller owns the reservation (see [4.4](#44-group-pre-order)). Should it check ownership the way the `DELETE` owner endpoint does?
-6. The frontend interceptor skips every URL that contains `/guest/`. The owner-only `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` needs a Cognito token, so the SPA would not send one automatically. The SPA doesn't call this endpoint today. How should it authenticate when it starts to?
+6. The frontend interceptor skips every URL that contains `/guest/`. The owner-only endpoints `GET /guest/groups/{groupReservationId}/sessions` and `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` need a Cognito token, so the SPA would not send one automatically. The SPA doesn't call these endpoints today. How should it authenticate when it starts to?
 
 **API contract**
 
-7. The gateway path `GET /guest/group/{groupReservationId}/sessions` (singular) has no Lambda route, and the homework specification uses `/guest/groups/…`. Should the gateway resource be renamed when the endpoint is implemented?
-8. `CreateGroupOwnerSessionAsync` exists but is never called. When should the owner's session be created — together with the group reservation, or on the owner's first visit? The planned `GET /reservations/{reservationId}/guest-session-id` seems to depend on it.
+7. **Resolved** ([spec](specs/2026-10-31-group-preorder-owner-endpoints.md)). The gateway path `GET /guest/group/{groupReservationId}/sessions` (singular) had no Lambda route, and the homework specification uses `/guest/groups/…`. The gateway resource was renamed to `/guest/groups/{groupReservationId}/sessions` together with implementing the endpoint.
+8. **Resolved** ([spec](specs/2026-10-31-group-preorder-owner-endpoints.md)). `CreateGroupOwnerSessionAsync` existed but was never called. The owner's session is now created on the owner's first call of `GET /reservations/{reservationId}/guest-session-id` (get-or-create).
 9. Three gateway resources have no `enable_cors`: `/tables/{id}`, `/locations/{locationId}/tables/all` and `/locations/{locationId}/dishes/{dishId}`. Do browser preflight requests to them succeed in the deployed API?
 
 **Infrastructure and configuration**

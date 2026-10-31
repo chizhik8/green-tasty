@@ -54,7 +54,8 @@ Only `api-handler`. Expected files (the developer may add files under the same f
   - section 4.4: the endpoint status table, and the paragraph "The owner has no session yet" (owner sessions are now created by `GET /reservations/{reservationId}/guest-session-id`);
   - section 7.1: the route and method counts, the sentence about the singular `/guest/group/...` gateway path, and the sentence listing planned group pre-order endpoints that exist in neither the gateway nor `RouteRegistry`;
   - sections 5.3 and 7.2: the gateway method and resource counts that this change alters;
-  - section 12: questions 7 and 8, marked as resolved with a link to this spec.
+  - section 12: questions 7 and 8, marked as resolved with a link to this spec;
+  - section 12, question 6: add that `GET /guest/groups/{groupReservationId}/sessions` is also an owner-only endpoint under `/guest/` that needs a Cognito token (today the question names only the `DELETE`). The question itself stays open.
 - Tests (owned by `unit-test-developer`): `Tests/Services/GuestSessionServiceTests.cs`, `Tests/Services/GroupReservationServiceTests.cs` (or the test class of whichever service hosts submit), new `Tests/Handlers/<HandlerName>Tests.cs` for each new or changed handler, and any existing test broken by constructor or signature changes.
 
 ## API contract changes
@@ -266,6 +267,8 @@ Owner exclusion:
 - **Response format change of the existing DELETE**: its keys change from PascalCase to camelCase. Nothing in the frontend calls it today (checked: no reference in `frontend/restaurant-frontend-app/src`).
 - **Renaming the gateway resource** removes `/guest/group/{groupReservationId}/sessions` on the next deployment; it never had a Lambda route.
 - **Exception hierarchy:** not-found exceptions derive from `ValidationException`; catching `ValidationException` first would turn 404s into 400s.
+- **Submit merges into `Canceled` and `Confirmed` order lines.** Per the merge rule (keep the existing line's `State`), group dishes added to a line the waiter has canceled stay `Canceled`, so they are effectively lost; quantity added to a `Confirmed` line becomes confirmed without the waiter confirming it. Appending a separate `Pending` line is not a fix: waiter confirm/cancel (`OrderService.ConfirmDishInOrder` / `CancelDishInOrder`) takes the first line with the `dishId`, so the order model assumes one line per `dishId`. Kept as specified by the user's decision; see Open questions.
+- **Cognito failure in the snapshot returns 500.** The owner's `given_name` falls back to the stored `GuestName` only when the user or attribute is not found. A Cognito error (network, throttling) is not caught and becomes 500 for `GET .../sessions`, and for `DELETE` after the session has already been deleted. Kept as is by the user's decision, consistent with other endpoints.
 
 ## Open questions
 
@@ -274,6 +277,8 @@ Owner exclusion:
 3. Should the submit be made atomic with a DynamoDB transaction (see Risks)?
 4. "Unavailable" in this spec means any dish state other than `Available` (`On stop` and `Out of stock`); US12 AC9 names only "On Stop". Confirm that `Out of stock` is treated the same way.
 5. US14 AC2 says the closed order gets the status "Closed", while the homework sets the group reservation to `Submitted`; this spec follows the homework. How `Submitted` and `Closed` relate in the product (see Discrepancies)?
+6. How should the group submit treat an order line with the same `dishId` that the waiter has already `Canceled` or `Confirmed` (for example, reset it to `Pending`)? Not changed in this spec (see Risks).
+7. Should a Cognito failure while reading the owner's `given_name` fall back to the stored name instead of returning 500? Not changed in this spec (see Risks).
 
 ## Discrepancies between code and user stories
 
@@ -303,6 +308,14 @@ Owner exclusion:
 | 2026-10-31 | Rename the gateway resource `/guest/group/{groupReservationId}/sessions` to `/guest/groups/{groupReservationId}/sessions` | User |
 | 2026-10-31 | Unit tests at service and handler level | User |
 | 2026-10-31 | Spec path `docs/specs/2026-10-31-group-preorder-owner-endpoints.md` | User |
+| 2026-10-31 | `/simplify` run on the staged backend changes: review by 4 parallel read-only `code-reviewer` instances (Reuse, Simplification, Efficiency, Altitude); agreed fixes go to `backend-developer` as review feedback | User |
+| 2026-10-31 | Simplify fixes agreed (behaviour-preserving, within scope): (A) one shared `EnsureGroupIsActive` guard in `Services/GroupReservations/`; (D) one shared reservation-owner check; (E) drop the redundant `dishIds.Length > 0` guard and manual loops around `GetDishesByIdsAsync`; (F) owner-first ordering via `OrderByDescending`; (B) owner exclusion moved into the repository (`CountJoinedGuestsByGroupReservationIdAsync`, replaces `CountByGroupReservationId`), per "Affected Lambdas and files"; (C) the four handlers use `UserContextHelper.GetAuthenticatedUserId` unchanged; (G1) dishes and owner `given_name` read in parallel in the snapshot | User |
+| 2026-10-31 | Simplify findings not taken: parallelising the other independent reads (extra reads on 404/403 paths); a shared exception-to-status mapper for handlers; reusing the new snapshot logic in `GetGuestSessionInfoAsync` (behaviour change, out of scope); `[Required]` on the submit DTO (changes the error contract); changing `UserContextHelper` (out of scope) | User |
+| 2026-10-31 | Review notes analysed: submit merge into `Canceled`/`Confirmed` order lines kept as specified, recorded under Risks and Open question 6 | User |
+| 2026-10-31 | Cognito failure while reading the owner's `given_name` keeps returning 500; recorded under Risks and Open question 7 | User |
+| 2026-10-31 | Scope extended: `docs/architecture.md` section 12, question 6 also names `GET /guest/groups/{groupReservationId}/sessions` as an owner-only `/guest/` endpoint needing a Cognito token. Status set back to Draft for re-approval | User |
+| 2026-10-31 | The note "`EnsureGroupIsActive` duplicated in two services" is resolved by simplify fix A (`GroupPreOrderGuards`) | Orchestrator (check) |
+| 2026-10-31 | Updated spec (section 12 question 6 in scope, new Risks and Open questions 6–7) re-approved | User |
 
 ## Status
 

@@ -555,12 +555,24 @@ Response: `200 OK`
 ```
 
 ### `GET` /reservations/{reservationId}/guest-session-id
+Returns the id of the reservation owner's own session in the group pre-order. If the group has no owner session yet, it is created, but only while the group is `Open` and the reservation is `Reserved`. An existing owner session id is returned in any group or reservation status.
+
+Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
+
 Response: `200 OK`
 ```json
 {
-  "guestSessionId": "string"
+  "guestSessionId": "owner-session-123"
 }
 ```
+
+Errors, in the order they are checked:
+- `401` `{ "error": "Unauthorized." }`: no `sub` claim.
+- `404` `{ "error": "..." }`: the reservation does not exist.
+- `403` `{ "error": "..." }`: the caller does not own the reservation.
+- `404` `{ "error": "..." }`: the reservation has no group reservation.
+- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }`: no owner session yet and the group is submitted.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: no owner session yet and the group is closed or the reservation is not `Reserved`.
 
 
 ### `DELETE` /reservations
@@ -1180,30 +1192,105 @@ Response: 200 OK
 ```
 
 ### `POST` /group-reservations/{groupReservationId}/submit
-Response: 200 OK
+Submits the consolidated group pre-order to the reservation's order. Only sessions with `isSubmitted: true` are used (guest and owner sessions alike). Cart lines whose dish no longer exists or whose state is not `Available` are dropped, and lines with the same `dishId` are merged by summing `quantity`. The result is added to the active order of the reservation: the quantity is added to an existing order line with the same `dishId` (its state is kept), other dishes are appended as `Pending`. The order status becomes `SubmittedByCustomer` and the group reservation status becomes `Submitted`. Nothing is saved when any check fails.
+
+Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
+
+Request body:
 ```json
 {
-  "message": "Group reservation pre-order submitted successfully."
+  "reservationId": "reservation-123"
 }
 ```
 
-### `GET` /guest/groups/{groupReservationId}/sessions
-Response: 200 OK
+Response: `200 OK`. The consolidated dishes from the submitted sessions (not the whole order); the order of elements is not specified.
 ```json
 [
   {
-    "id": "string",
-    "groupReservationId": "string",
-    "guestName": "string",
-    "status": "string"
+    "dishId": "dish1",
+    "quantity": 3
+  },
+  {
+    "dishId": "dish2",
+    "quantity": 2
   }
 ]
 ```
 
-### `DELETE` /guest/groups/{groupReservationId}/sessions/{guestSessionId}
-Response: 200 OK
+Errors, in the order they are checked:
+- `401` `{ "error": "Unauthorized." }`: no `sub` claim.
+- `400` `{ "error": "..." }`: missing or unparsable body, or empty `reservationId`.
+- `404` `{ "error": "..." }`: the group reservation does not exist.
+- `400` `{ "message": "...", "errorCode": "Unknown" }`: `reservationId` is not the reservation of this group.
+- `404` `{ "error": "..." }`: the reservation does not exist.
+- `403` `{ "error": "..." }`: the caller does not own the reservation.
+- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }`: the group is already submitted.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is closed, or the reservation is not `Reserved`.
+- `400` `{ "message": "...", "errorCode": "Unknown" }`: no session is submitted; the submitted sessions contain no available dishes; or the reservation has no active order.
+
+### `GET` /guest/groups/{groupReservationId}/sessions
+Returns the group snapshot: every participant session of the group with its dishes and totals. Allowed in any group and reservation status.
+
+Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
+
+Response: `200 OK`
 ```json
 {
-  "message": "Guest session removed from group successfully."
+  "participants": [
+    {
+      "id": "session1",
+      "type": "Guest",
+      "name": "Andrii",
+      "items": [
+        {
+          "dish": {
+            "id": "dish1",
+            "name": "Caesar Salad",
+            "description": "string",
+            "dishType": "string",
+            "price": 180,
+            "weight": "string",
+            "calories": "string",
+            "proteins": "string",
+            "fats": "string",
+            "carbohydrates": "string",
+            "vitamins": "string",
+            "imageUrl": "string|null",
+            "state": "Available"
+          },
+          "quantity": 2
+        }
+      ],
+      "total": 360,
+      "isSubmitted": true
+    }
+  ],
+  "total": 360
 }
 ```
+
+- `participants`: one entry per session of the group. The owner session, if it exists, comes first with `type: "Owner"` and the owner's Cognito `given_name` (the stored session name if the user or attribute is not found); guests follow with `type: "Guest"` and their guest name.
+- `items`: cart lines with the full dish and `quantity`. A line whose dish no longer exists is omitted.
+- `total` (participant): sum of `price × quantity` over items whose dish `state` is `Available`; items in another state are listed but not counted.
+- `total` (top level): sum of the participant totals. A group without sessions returns `participants: []` and `total: 0`.
+
+Errors, in the order they are checked:
+- `401` `{ "error": "Unauthorized." }`: no `sub` claim.
+- `404` `{ "error": "..." }`: the group reservation does not exist, or its reservation does not exist.
+- `403` `{ "error": "..." }`: the caller does not own the reservation.
+
+### `DELETE` /guest/groups/{groupReservationId}/sessions/{guestSessionId}
+Removes a guest's session from the group and returns the updated group snapshot.
+
+Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
+
+Response: `200 OK`. The snapshot of the remaining sessions, in the same format and with the same rules as `GET /guest/groups/{groupReservationId}/sessions`.
+
+Errors, in the order they are checked (nothing is deleted on an error):
+- `401` `{ "error": "Unauthorized." }`: no `sub` claim.
+- `404` `{ "error": "..." }`: the group reservation does not exist, or its reservation does not exist.
+- `403` `{ "error": "..." }`: the caller does not own the reservation.
+- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }`: the group is submitted.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is closed, or the reservation is not `Reserved`.
+- `404` `{ "error": "..." }`: the guest session does not exist.
+- `400` `{ "message": "...", "errorCode": "Unknown" }`: the guest session belongs to another group, or it is the owner session.

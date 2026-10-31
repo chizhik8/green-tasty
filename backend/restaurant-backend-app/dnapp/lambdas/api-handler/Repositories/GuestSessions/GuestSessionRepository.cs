@@ -50,7 +50,7 @@ public class GuestSessionRepository(IDynamoDBContext context) : IGuestSessionRep
         OverrideTableName = ResourceNames.GuestSessionTableName
     });
 
-    public async Task<int> CountByGroupReservationId(string groupReservationId)
+    public async Task<int> CountJoinedGuestsByGroupReservationIdAsync(string groupReservationId)
     {
         List<GuestSession> result = await context.QueryAsync<GuestSession>(groupReservationId, new QueryConfig
         {
@@ -58,7 +58,8 @@ public class GuestSessionRepository(IDynamoDBContext context) : IGuestSessionRep
             IndexName = GlobalSecondaryIndexes.GuestSession.GroupReservationId
         }).GetRemainingAsync();
 
-        return result.Count;
+        // Owner sessions are not joined guests: they do not count toward the guest limit or the participant count.
+        return result.Count(s => !s.IsOwnerSession);
     }
 
     public async Task DeleteAsync(GuestSession session)
