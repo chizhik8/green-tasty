@@ -226,8 +226,8 @@ The shared `lambda-basic-execution` policy grants S3, DynamoDB, Cognito admin, S
 
 Three artifacts describe the API, and a change to it must reach all three:
 
-1. **[RouteRegistry.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Routing/RouteRegistry.cs)** defines what the Lambda can serve (69 routes).
-2. **The top-level [deployment_resources.json](../backend/restaurant-backend-app/deployment_resources.json)** defines what the gateway exposes and with which authorizer (69 methods).
+1. **[RouteRegistry.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Routing/RouteRegistry.cs)** defines what the Lambda can serve (70 routes).
+2. **The top-level [deployment_resources.json](../backend/restaurant-backend-app/deployment_resources.json)** defines what the gateway exposes and with which authorizer (70 methods).
 3. **[docs/ApiRoutes.md](../backend/restaurant-backend-app/docs/ApiRoutes.md)** is the human-readable contract the frontend is written against. A Swagger UI generated from the gateway definition lives in `swagger_src/` ([GenerateSwagger.md](../backend/restaurant-backend-app/docs/GenerateSwagger.md)).
 
 Today the first two agree: every gateway method has a matching Lambda route. The former singular gateway path `/guest/group/{groupReservationId}/sessions` was renamed to `/guest/groups/{groupReservationId}/sessions`, which now has a route.
