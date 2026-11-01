@@ -1228,7 +1228,7 @@ Errors, in the order they are checked:
 - `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is closed, or the reservation is not `Reserved`.
 - `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: less than 30 minutes remain before the reservation start (a submit exactly at the cutoff is still allowed).
 - `400` `{ "message": "...", "errorCode": "Unknown" }`: no session is submitted; the submitted sessions contain no available dishes; or the reservation has no active order.
-- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }` or `"GroupReservationExpired"`: the group was submitted or closed by another request after the checks above (for example, a concurrent or repeated submit); nothing is written. A client that retries after a lost response gets `GroupReservationSubmitted`.
+- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }` or `"GroupReservationExpired"`: the group was submitted or closed by another request after the checks above (for example, a repeated submit, or one that loses to another submit); nothing is written. A truly concurrent submit may instead get `500` when DynamoDB cancels its transaction with a transaction conflict; nothing is written in that case either. A client that retries after a lost response or such a `500` gets `GroupReservationSubmitted`.
 
 ### `GET` /guest/groups/{groupReservationId}/sessions
 Returns the group snapshot: every participant session of the group with its dishes and totals. Allowed in any group and reservation status.
