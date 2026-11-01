@@ -8,6 +8,7 @@ using APIHandler.Constants.Orders;
 using APIHandler.Entities;
 using APIHandler.Repositories.GroupReservations;
 using Moq;
+using RegexMatch = System.Text.RegularExpressions.Match;
 
 namespace APIHandler.Tests.Repositories;
 
@@ -153,13 +154,13 @@ public class GroupReservationRepositoryTests
         Assert.Equal("groupReservationId", key.Key);
         Assert.Equal(GroupId, key.Value.S);
 
-        Match condition = Regex.Match(
+        RegexMatch condition = Regex.Match(
             ResolveNames(update.ConditionExpression, update.ExpressionAttributeNames),
             @"^\s*status\s*=\s*(:\w+)\s*$");
         Assert.True(condition.Success, $"Unexpected condition expression: '{update.ConditionExpression}'.");
         Assert.Equal(ConvertedStatus(GroupReservationStatus.Open), update.ExpressionAttributeValues[condition.Groups[1].Value].S);
 
-        Match set = Regex.Match(
+        RegexMatch set = Regex.Match(
             ResolveNames(update.UpdateExpression, update.ExpressionAttributeNames),
             @"^\s*SET\s+status\s*=\s*(:\w+)\s*$",
             RegexOptions.IgnoreCase);
