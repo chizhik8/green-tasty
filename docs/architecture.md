@@ -239,7 +239,7 @@ Today the first two agree: every gateway method has a matching Lambda route. The
 - Request and response bodies are JSON. Path parameters come from `{…}` segments in the route template.
 - Plain errors have the shape `{ "error": "<message>" }`. Some success responses are `{ "message": "<text>" }`, and others return the resource itself.
 - Domain validation errors in group pre-order return status `400` with a body like `{ "message": "...", "errorCode": "GuestSessionExpired" }`. The C# record is `ErrorCodeResponse(Message, ErrorCode)` ([ErrorCodeResponse.cs](../backend/restaurant-backend-app/dnapp/lambdas/api-handler/Models/ErrorCodeResponse.cs)). `ResponseBuilder.CreateJsonResponse` serializes it with camelCase property names, and the enum is written as a string. The possible `errorCode` values are `GroupReservationExpired`, `GroupReservationSubmitted`, `GuestLimitExceeded`, `GuestSessionExpired` and `Unknown`.
-- **CORS.** The gateway enables CORS (`enable_cors`) on 48 of its 51 resources. The three exceptions are `/tables/{id}`, `/locations/{locationId}/tables/all` and `/locations/{locationId}/dishes/{dishId}`. The Lambda adds `Access-Control-Allow-Origin: *` and allows the headers `Content-Type` and `Authorization`.
+- **CORS.** The gateway enables CORS (`enable_cors`) on 51 of its 52 resources. The only exception is `/tables/{id}`. The Lambda adds `Access-Control-Allow-Origin: *` and allows the headers `Content-Type` and `Authorization`.
 
 ## 8. Environments
 
@@ -317,7 +317,7 @@ These points came up while checking the repository and could not be resolved fro
 
 7. **Resolved** ([spec](specs/2026-10-31-group-preorder-owner-endpoints.md)). The gateway path `GET /guest/group/{groupReservationId}/sessions` (singular) had no Lambda route, and the homework specification uses `/guest/groups/…`. The gateway resource was renamed to `/guest/groups/{groupReservationId}/sessions` together with implementing the endpoint.
 8. **Resolved** ([spec](specs/2026-10-31-group-preorder-owner-endpoints.md)). `CreateGroupOwnerSessionAsync` existed but was never called. The owner's session is now created on the owner's first call of `GET /reservations/{reservationId}/guest-session-id` (get-or-create).
-9. Three gateway resources have no `enable_cors`: `/tables/{id}`, `/locations/{locationId}/tables/all` and `/locations/{locationId}/dishes/{dishId}`. Do browser preflight requests to them succeed in the deployed API?
+9. The gateway resource `/tables/{id}` has no `enable_cors`. Do browser preflight requests to it succeed in the deployed API?
 
 **Infrastructure and configuration**
 

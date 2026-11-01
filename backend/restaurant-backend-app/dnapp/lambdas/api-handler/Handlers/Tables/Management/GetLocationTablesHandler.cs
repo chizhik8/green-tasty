@@ -13,8 +13,8 @@ public class GetLocationTablesHandler(ITableService tableService) : IApiRequestH
     {
         if (!RoleHelper.IsWaiter(request)) return ResponseBuilder.CreateErrorResponse(403, "Forbidden", context.Logger);
 
-        if (request.PathParameters == null || !request.PathParameters.TryGetValue("locationId", out var locationId))
-            return ResponseBuilder.CreateErrorResponse(400, "Missing 'locationId'", context.Logger);
+        if (request.PathParameters == null || !request.PathParameters.TryGetValue("id", out var locationId))
+            return ResponseBuilder.CreateErrorResponse(400, "Missing 'id'", context.Logger);
 
         var tables = await tableService.GetAllTablesForLocationAsync(locationId);
         return ResponseBuilder.CreateSuccessResponse(tables);

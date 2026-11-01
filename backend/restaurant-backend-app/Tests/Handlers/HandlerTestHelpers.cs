@@ -21,7 +21,18 @@ public enum MissingSubjectCase
 }
 
 /// <summary>
-/// Builds API Gateway requests and checks responses for the group pre-order owner handler tests.
+/// Ways in which a request can arrive from a caller who is not in the Cognito group <c>Waiter</c>.
+/// </summary>
+public enum NonWaiterCase
+{
+    AuthorizerNull,
+    GroupsClaimMissing,
+    CustomerOnly,
+    CustomerOnlyJsonArray,
+}
+
+/// <summary>
+/// Builds API Gateway requests and checks responses for the handler tests.
 /// </summary>
 internal static class HandlerTestHelpers
 {
@@ -42,6 +53,28 @@ internal static class HandlerTestHelpers
                 },
             },
         },
+    };
+
+    /// <summary>A request from <see cref="CallerId"/> whose <c>cognito:groups</c> claim is <paramref name="groups"/>.</summary>
+    public static APIGatewayProxyRequest CreateRequestWithGroups(Dictionary<string, string>? pathParameters, string groups)
+    {
+        APIGatewayProxyRequest request = CreateRequest(pathParameters);
+        request.RequestContext.Authorizer.Claims["cognito:groups"] = groups;
+        return request;
+    }
+
+    /// <summary>A request from <see cref="CallerId"/> in the Cognito group <c>Waiter</c>.</summary>
+    public static APIGatewayProxyRequest CreateWaiterRequest(Dictionary<string, string>? pathParameters)
+        => CreateRequestWithGroups(pathParameters, "Waiter");
+
+    /// <summary>Ways in which a request can arrive from a caller who is not in the <c>Waiter</c> group.</summary>
+    public static APIGatewayProxyRequest.ProxyRequestContext NonWaiterContext(NonWaiterCase nonWaiterCase) => nonWaiterCase switch
+    {
+        NonWaiterCase.AuthorizerNull => new APIGatewayProxyRequest.ProxyRequestContext { Authorizer = null },
+        NonWaiterCase.GroupsClaimMissing => WithClaims(new Dictionary<string, string> { ["sub"] = CallerId }),
+        NonWaiterCase.CustomerOnly => WithClaims(new Dictionary<string, string> { ["sub"] = CallerId, ["cognito:groups"] = "Customer" }),
+        NonWaiterCase.CustomerOnlyJsonArray => WithClaims(new Dictionary<string, string> { ["sub"] = CallerId, ["cognito:groups"] = "[\"Customer\"]" }),
+        _ => throw new ArgumentOutOfRangeException(nameof(nonWaiterCase)),
     };
 
     // UserContextHelper dereferences RequestContext, so every case keeps a non-null RequestContext.

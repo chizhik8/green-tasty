@@ -178,13 +178,22 @@ Response: `200 OK`
 ]
 ```
 
-### `DELETE` /locations/{locationId}/dishes/{dishId}
+### `DELETE` /locations/{id}/dishes/{dishId}
+Removes the dish from the specialty dishes of the location `id`.
+
+Authorization: Cognito ID token; only the `Waiter` group. The handler does not check that the location is the waiter's own location.
+
 Response: `200 OK`
 ```json
 {
-  "message": "Dish removed from location successfully."
+  "message": "Dish '<dishId>' successfully removed from location '<id>'."
 }
 ```
+
+Errors, in the order they are checked:
+- `403` `{ "error": "Forbidden: Only waiters can perform this action." }`: the caller is not in the `Waiter` group.
+- `400` `{ "error": "..." }`: `id` or `dishId` path parameter is missing.
+- `400` `{ "error": "..." }`: the location does not exist, or the dish is not in its specialty dishes.
 
 
 ### `GET` /locations/{id}
@@ -259,6 +268,28 @@ Response: `200 OK`
   "locationId": "string"
 }
 ```
+
+### `GET` /locations/{id}/waiters
+Returns the waiters assigned to the location `id` (items of the `Waiters` table). A waiter may read only the location they are assigned to.
+
+Authorization: Cognito ID token; only the `Waiter` group, and the caller's own location (the `locationId` of the caller's `Waiters` item, found by `sub`) must equal `id`.
+
+Response: `200 OK`. `reservations` is `[]` when the waiter has none; the order of elements is not specified. The location is not checked for existence; an empty result is `[]`.
+```json
+[
+  {
+    "userId": "string",
+    "locationId": "string",
+    "createdAt": "2026-10-27T12:00:00Z",
+    "reservations": ["string"]
+  }
+]
+```
+
+Errors, in the order they are checked:
+- `403` `{ "error": "Forbidden" }`: the caller is not in the `Waiter` group.
+- `400` `{ "error": "Location id is required." }`: `id` path parameter is missing or empty.
+- `403` `{ "error": "Forbidden" }`: no `sub` claim, the caller has no `Waiters` item, or the caller's location is not `id`.
 
 ### `DELETE` /waiters
 Request body:
@@ -711,8 +742,12 @@ Response: `200 OK`
 ]
 ```
 
-### `GET` /locations/{locationId}/tables/all
-Response: `200 OK`
+### `GET` /locations/{id}/tables/all
+Returns all tables of the location `id`.
+
+Authorization: Cognito ID token; only the `Waiter` group. The handler does not check that the location is the waiter's own location.
+
+Response: `200 OK`. `[]` when the location has no tables or does not exist.
 ```json
 [
   {
@@ -723,6 +758,10 @@ Response: `200 OK`
   }
 ]
 ```
+
+Errors, in the order they are checked:
+- `403` `{ "error": "Forbidden" }`: the caller is not in the `Waiter` group.
+- `400` `{ "error": "..." }`: `id` path parameter is missing.
 
 ### `GET` /tables/{id}/available-time-slots
 Query parameters:

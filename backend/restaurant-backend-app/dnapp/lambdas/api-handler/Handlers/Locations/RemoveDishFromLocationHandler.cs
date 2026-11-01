@@ -22,10 +22,10 @@ public class RemoveDishFromLocationHandler(ILocationService locationService) : I
         }
 
         if (request.PathParameters == null ||
-            !request.PathParameters.TryGetValue("locationId", out var locationId) ||
+            !request.PathParameters.TryGetValue("id", out var locationId) ||
             !request.PathParameters.TryGetValue("dishId", out var dishId))
         {
-            return ResponseBuilder.CreateErrorResponse(400, "Missing 'locationId' or 'dishId' in path parameters.", context.Logger);
+            return ResponseBuilder.CreateErrorResponse(400, "Missing 'id' or 'dishId' in path parameters.", context.Logger);
         }
 
         try
