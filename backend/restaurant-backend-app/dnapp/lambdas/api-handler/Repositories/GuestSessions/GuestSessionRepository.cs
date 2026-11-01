@@ -1,18 +1,24 @@
+using Amazon.DynamoDBv2;
 using Amazon.DynamoDBv2.DataModel;
+using Amazon.DynamoDBv2.Model;
 using APIHandler.Constants;
 using APIHandler.Entities;
+using APIHandler.Helpers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace APIHandler.Repositories.GuestSessions;
 
-public class GuestSessionRepository(IDynamoDBContext context) : IGuestSessionRepository
+public class GuestSessionRepository(IDynamoDBContext context, IAmazonDynamoDB dynamoDbClient) : IGuestSessionRepository
 {
     public async Task<GuestSession?> GetByGuestSessionId(string id) => await context.LoadAsync<GuestSession?>(id, new LoadConfig()
     {
         OverrideTableName = ResourceNames.GuestSessionTableName
     });
+
+    public async Task<GuestSession?> GetByGuestSessionIdConsistentAsync(string id) =>
+        await context.LoadAsync<GuestSession?>(id, DynamoConfig.LoadConfig(ResourceNames.GuestSessionTableName));
 
     public async Task<GuestSession?> GetByGroupReservationId(string groupReservationId)
     {
@@ -49,6 +55,31 @@ public class GuestSessionRepository(IDynamoDBContext context) : IGuestSessionRep
     {
         OverrideTableName = ResourceNames.GuestSessionTableName
     });
+
+    public async Task<bool> TryCreateAsync(GuestSession guestSession)
+    {
+        string tableName = ResourceNames.GuestSessionTableName;
+
+        // Converted by the context, so the item has the same attribute names and value representation as SaveAsync writes.
+        // Null properties are left out: a NULL value is not allowed for the guestSessionTokenHash index key.
+        Dictionary<string, AttributeValue> item = context.ToAttributeMap(guestSession, tableName);
+
+        try
+        {
+            await dynamoDbClient.PutItemAsync(new PutItemRequest
+            {
+                TableName = tableName,
+                Item = item,
+                ConditionExpression = "attribute_not_exists(guestSessionId)",
+            });
+            return true;
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            // A session with this id already exists; nothing was written.
+            return false;
+        }
+    }
 
     public async Task<int> CountJoinedGuestsByGroupReservationIdAsync(string groupReservationId)
     {

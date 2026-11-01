@@ -221,9 +221,11 @@ public class GuestSessionService(
         GroupReservation group = await groupReservationRepository.GetByReservationIdAsync(reservationId)
             ?? throw new GroupReservationNotFoundException();
 
-        List<GuestSession> sessions = await guestSessionRepository.GetAllByGroupReservationIdAsync(group.GroupReservationId) ?? [];
+        // The owner session id is deterministic, so the session is read by key with a strongly consistent read
+        // (the groupReservationId index is eventually consistent and would miss a just-created session).
+        string ownerSessionId = GetOwnerSessionId(group.GroupReservationId);
 
-        GuestSession? ownerSession = sessions.FirstOrDefault(s => s.IsOwnerSession);
+        GuestSession? ownerSession = await guestSessionRepository.GetByGuestSessionIdConsistentAsync(ownerSessionId);
         if (ownerSession is not null)
         {
             return new OwnerGuestSessionIdResponse(ownerSession.Id);
@@ -231,9 +233,11 @@ public class GuestSessionService(
 
         GroupPreOrderGuards.EnsureGroupIsActive(group, reservation);
 
-        GuestSession createdSession = await CreateGroupOwnerSessionAsync(userId, group.GroupReservationId);
+        // If a concurrent call created the session in between, the conditional create writes nothing
+        // and the existing session (with the same id) is returned.
+        await CreateGroupOwnerSessionAsync(userId, group.GroupReservationId);
 
-        return new OwnerGuestSessionIdResponse(createdSession.Id);
+        return new OwnerGuestSessionIdResponse(ownerSessionId);
     }
 
     public async Task SubmitCartAsync(string guestSessionId)
@@ -400,11 +404,19 @@ public class GuestSessionService(
         return (group, reservation);
     }
 
-    private async Task<GuestSession> CreateGroupOwnerSessionAsync(string userId, string groupReservationId)
+    /// <summary>
+    /// The id of the owner session of a group reservation: one per group, without '#' because it is used in URL paths.
+    /// </summary>
+    private static string GetOwnerSessionId(string groupReservationId) => $"owner-{groupReservationId}";
+
+    /// <summary>
+    /// Creates the owner session with a conditional put; does nothing if a session with this id already exists.
+    /// </summary>
+    private async Task CreateGroupOwnerSessionAsync(string userId, string groupReservationId)
     {
         var session = new GuestSession()
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = GetOwnerSessionId(groupReservationId),
             GroupReservationId = groupReservationId,
             GuestName = "Owner",
             Dishes = [],
@@ -412,9 +424,7 @@ public class GuestSessionService(
             OwnerUserId = userId,
         };
 
-        await guestSessionRepository.SaveAsync(session);
-
-        return session;
+        await guestSessionRepository.TryCreateAsync(session);
     }
 
     public async Task<GetGuestSessionResponse> GetGuestSessionInfoAsync(string guestSessionId)

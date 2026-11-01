@@ -555,14 +555,14 @@ Response: `200 OK`
 ```
 
 ### `GET` /reservations/{reservationId}/guest-session-id
-Returns the id of the reservation owner's own session in the group pre-order. If the group has no owner session yet, it is created, but only while the group is `Open` and the reservation is `Reserved`. An existing owner session id is returned in any group or reservation status.
+Returns the id of the reservation owner's own session in the group pre-order. The id is always `owner-{groupReservationId}`: a group has at most one owner session. If the group has no owner session yet, it is created, but only while the group is `Open` and the reservation is `Reserved`. An existing owner session id is returned in any group or reservation status. Concurrent first calls create one session and all return its id.
 
 Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
 
 Response: `200 OK`
 ```json
 {
-  "guestSessionId": "owner-session-123"
+  "guestSessionId": "owner-group-reservation-123"
 }
 ```
 
@@ -1192,7 +1192,7 @@ Response: 200 OK
 ```
 
 ### `POST` /group-reservations/{groupReservationId}/submit
-Submits the consolidated group pre-order to the reservation's order. Only sessions with `isSubmitted: true` are used (guest and owner sessions alike). Cart lines whose dish no longer exists or whose state is not `Available` are dropped, and lines with the same `dishId` are merged by summing `quantity`. The result is added to the active order of the reservation: the quantity is added to an existing order line with the same `dishId` (its state is kept), other dishes are appended as `Pending`. The order status becomes `SubmittedByCustomer` and the group reservation status becomes `Submitted`. Nothing is saved when any check fails.
+Submits the consolidated group pre-order to the reservation's order. Only sessions with `isSubmitted: true` are used (guest and owner sessions alike). Cart lines whose dish no longer exists or whose state is not `Available` are dropped, and lines with the same `dishId` are merged by summing `quantity`. The result is added to the active order of the reservation: the quantity is added to an existing order line with the same `dishId` (its state is kept), other dishes are appended as `Pending`. The order status becomes `SubmittedByCustomer` and the group reservation status becomes `Submitted`; both are written in one transaction, only if the group is still `Open`, so a second or concurrent submit of the same group does not add the dishes again. The submit is allowed only up to 30 minutes before the reservation start. Nothing is saved when any check fails.
 
 Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
 
@@ -1226,7 +1226,9 @@ Errors, in the order they are checked:
 - `403` `{ "error": "..." }`: the caller does not own the reservation.
 - `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }`: the group is already submitted.
 - `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is closed, or the reservation is not `Reserved`.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: less than 30 minutes remain before the reservation start (a submit exactly at the cutoff is still allowed).
 - `400` `{ "message": "...", "errorCode": "Unknown" }`: no session is submitted; the submitted sessions contain no available dishes; or the reservation has no active order.
+- `400` `{ "message": "...", "errorCode": "GroupReservationSubmitted" }` or `"GroupReservationExpired"`: the group was submitted or closed by another request after the checks above (for example, a concurrent or repeated submit); nothing is written. A client that retries after a lost response gets `GroupReservationSubmitted`.
 
 ### `GET` /guest/groups/{groupReservationId}/sessions
 Returns the group snapshot: every participant session of the group with its dishes and totals. Allowed in any group and reservation status.

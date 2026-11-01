@@ -167,6 +167,8 @@ public class GroupReservationService(
 
         GroupPreOrderGuards.EnsureGroupIsActive(groupReservation, reservation);
 
+        GroupPreOrderGuards.EnsureBeforePreOrderCutoff(reservation);
+
         List<GuestSession> submittedSessions = (await guestSessionRepository.GetAllByGroupReservationIdAsync(groupReservationId) ?? [])
             .Where(s => s.IsSubmitted)
             .ToList();
@@ -223,13 +225,30 @@ public class GroupReservationService(
         }
 
         order.Status = OrderStatus.SubmittedByCustomer;
-        await orderRepository.SaveOrderAsync(order);
-
-        // Not atomic with the order update (no transaction or condition): see "Risks" in docs/specs/2026-10-31-group-preorder-owner-endpoints.md.
         groupReservation.Status = GroupReservationStatus.Submitted;
-        await groupReservationRepository.SaveGroupReservationAsync(groupReservation);
+
+        // One transaction, conditioned on the group still being Open: a concurrent or repeated submit
+        // writes nothing, so the dishes are never added to the order twice.
+        bool written = await groupReservationRepository.TryUpdateStatusWithOrderAsync(groupReservation, GroupReservationStatus.Open, order);
+        if (!written)
+            await ThrowGroupNoLongerOpenAsync(groupReservationId);
 
         return consolidatedDishes;
+    }
+
+    /// <summary>
+    /// Called when the submit transaction was canceled because the group was no longer <c>Open</c>:
+    /// re-reads the group and throws the error matching its current status.
+    /// </summary>
+    private async Task ThrowGroupNoLongerOpenAsync(string groupReservationId)
+    {
+        GroupReservation? current = await groupReservationRepository.GetGroupReservationByIdAsync(groupReservationId);
+
+        if (current is not null)
+            GroupPreOrderGuards.EnsureGroupIsOpen(current);
+
+        throw new InvalidOperationException(
+            $"The submit of group reservation '{groupReservationId}' was rejected because the group is no longer open, but its current status is '{current?.Status.ToString() ?? "not found"}'.");
     }
 }
 

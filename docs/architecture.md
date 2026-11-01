@@ -126,8 +126,8 @@ Group pre-order connects three actors: a signed-in reservation owner, anonymous 
 | Endpoint | Homework level | Status |
 |---|---|---|
 | `GET /guest/groups/{groupReservationId}/sessions` | 1 | Implemented: `GetGroupSessionsHandler` → `GuestSessionService.GetGroupSessionsAsync`, Cognito-protected, owner only |
-| `GET /reservations/{reservationId}/guest-session-id` | 2 | Implemented: `GetOwnerGuestSessionIdHandler` → `GuestSessionService.GetOrCreateOwnerSessionIdAsync`, Cognito-protected, owner only |
-| `POST /group-reservations/{groupReservationId}/submit` | 2 | Implemented: `SubmitGroupReservationHandler` → `GroupReservationService.SubmitGroupReservationAsync`, Cognito-protected, owner only. The order and group updates are two separate writes, not a transaction |
+| `GET /reservations/{reservationId}/guest-session-id` | 2 | Implemented: `GetOwnerGuestSessionIdHandler` → `GuestSessionService.GetOrCreateOwnerSessionIdAsync`, Cognito-protected, owner only; the owner session id is `owner-{groupReservationId}`, created with a conditional put |
+| `POST /group-reservations/{groupReservationId}/submit` | 2 | Implemented: `SubmitGroupReservationHandler` → `GroupReservationService.SubmitGroupReservationAsync`, Cognito-protected, owner only. The order and the group status are written in one DynamoDB transaction, conditioned on the group being `Open`; the submit is rejected later than 30 minutes before the reservation start |
 | `DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}` | 3 | Implemented: `DeleteGuestSessionHandler` → `GuestSessionService.DeleteGuestSessionAsync`, Cognito-protected, owner only; returns the same group snapshot as `GET …/sessions` |
 
 Update this table when one of these endpoints changes.

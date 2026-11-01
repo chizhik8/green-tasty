@@ -845,6 +845,41 @@ public class GuestSessionServiceTests
     private void VerifyNoSessionSaved() =>
         _mockGuestSessionRepository.Verify(r => r.SaveAsync(It.IsAny<GuestSession>()), Times.Never);
 
+    // ---- Owner session helpers (AC8, AC20) ----
+
+    // The deterministic owner session id of the group "group-1": owner-{groupReservationId}.
+    private const string OwnerSessionId = "owner-" + GroupId;
+
+    private void SetupOwnerSessionLookup(
+        GroupReservationStatus groupStatus = GroupReservationStatus.Open,
+        ReservationStatus reservationStatus = ReservationStatus.Reserved,
+        GuestSession? storedOwnerSession = null)
+    {
+        _mockReservationRepository
+            .Setup(r => r.GetReservationByIdAsync(ReservationId))
+            .ReturnsAsync(BuildReservation(reservationStatus));
+        _mockGroupReservationRepository
+            .Setup(r => r.GetByReservationIdAsync(ReservationId))
+            .ReturnsAsync(BuildGroup(groupStatus));
+        // Only the deterministic id is set up: a lookup by any other id returns null.
+        _mockGuestSessionRepository
+            .Setup(r => r.GetByGuestSessionIdConsistentAsync(OwnerSessionId))
+            .ReturnsAsync(storedOwnerSession);
+    }
+
+    private static GuestSession BuildStoredOwnerSession() =>
+        BuildSession(OwnerSessionId, StoredOwnerName, isOwner: true);
+
+    private void VerifyNoOwnerSessionCreated()
+    {
+        _mockGuestSessionRepository.Verify(r => r.TryCreateAsync(It.IsAny<GuestSession>()), Times.Never);
+        _mockGuestSessionRepository.Verify(r => r.SaveAsync(It.IsAny<GuestSession>()), Times.Never);
+    }
+
+    // S9b: the owner session is not looked up in the group's session list (groupReservationId index).
+    private void VerifyGroupSessionListNotRead() =>
+        _mockGuestSessionRepository.Verify(r => r.GetAllByGroupReservationIdAsync(It.IsAny<string>()), Times.Never);
+
     // ---- GetGroupSessionsAsync: access checks (S7, AC2) ----
 
     [Fact]
@@ -1268,7 +1303,7 @@ public class GuestSessionServiceTests
         Assert.Equal(80m, result.Total);
     }
 
-    // ---- GetOrCreateOwnerSessionIdAsync (S8–S11, AC7, AC8) ----
+    // ---- GetOrCreateOwnerSessionIdAsync (S8–S11, S9a, S9b, AC7, AC8, AC20) ----
 
     [Fact]
     public async Task GetOrCreateOwnerSessionIdAsync_ReservationNotFound_ThrowsReservationNotFoundAndCreatesNothing()
@@ -1280,7 +1315,7 @@ public class GuestSessionServiceTests
         await Assert.ThrowsAsync<ReservationNotFoundException>(() =>
             _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId));
 
-        VerifyNoSessionSaved();
+        VerifyNoOwnerSessionCreated();
     }
 
     [Theory]
@@ -1299,7 +1334,7 @@ public class GuestSessionServiceTests
         await Assert.ThrowsAsync<ActionForbiddenException>(() =>
             _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId));
 
-        VerifyNoSessionSaved();
+        VerifyNoOwnerSessionCreated();
     }
 
     [Fact]
@@ -1315,7 +1350,7 @@ public class GuestSessionServiceTests
         await Assert.ThrowsAsync<GroupReservationNotFoundException>(() =>
             _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId));
 
-        VerifyNoSessionSaved();
+        VerifyNoOwnerSessionCreated();
     }
 
     [Theory]
@@ -1326,75 +1361,80 @@ public class GuestSessionServiceTests
         GroupReservationStatus groupStatus,
         ReservationStatus reservationStatus)
     {
-        _mockReservationRepository
-            .Setup(r => r.GetReservationByIdAsync(ReservationId))
-            .ReturnsAsync(BuildReservation(reservationStatus));
-        _mockGroupReservationRepository
-            .Setup(r => r.GetByReservationIdAsync(ReservationId))
-            .ReturnsAsync(BuildGroup(groupStatus));
-        SetupSessions(BuildSession("session-a", "Andrii"), BuildOwnerSession());
+        // S8 (AC8, AC20): the session owner-{groupReservationId} exists, whatever the group or reservation status.
+        SetupOwnerSessionLookup(groupStatus, reservationStatus, storedOwnerSession: BuildStoredOwnerSession());
 
         OwnerGuestSessionIdResponse result = await _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId);
 
-        Assert.Equal("owner-session", result.GuestSessionId);
-        VerifyNoSessionSaved();
+        Assert.Equal(OwnerSessionId, result.GuestSessionId);
+        _mockGuestSessionRepository.Verify(r => r.GetByGuestSessionIdConsistentAsync(OwnerSessionId), Times.Once);
+        VerifyNoOwnerSessionCreated();
+        VerifyGroupSessionListNotRead();
     }
 
     [Fact]
-    public async Task GetOrCreateOwnerSessionIdAsync_TwoOwnerSessionsAfterConcurrentCreation_ReturnsFirstFoundWithoutCreating()
+    public async Task GetOrCreateOwnerSessionIdAsync_NoOwnerSessionAndGroupActive_CreatesOwnerSessionWithDeterministicIdThroughConditionalCreate()
     {
-        // Spec "Risks": two concurrent first calls can create two owner sessions; the lookup takes the first one found.
-        _mockReservationRepository
-            .Setup(r => r.GetReservationByIdAsync(ReservationId))
-            .ReturnsAsync(BuildReservation());
-        _mockGroupReservationRepository
-            .Setup(r => r.GetByReservationIdAsync(ReservationId))
-            .ReturnsAsync(BuildGroup());
-        SetupSessions(
-            BuildSession("session-a", "Andrii"),
-            BuildOwnerSession(),
-            BuildSession("owner-session-2", StoredOwnerName, isOwner: true));
+        // S9 (AC8, AC20).
+        SetupOwnerSessionLookup();
+
+        var created = new List<GuestSession>();
+        _mockGuestSessionRepository
+            .Setup(r => r.TryCreateAsync(It.IsAny<GuestSession>()))
+            .Callback<GuestSession>(created.Add)
+            .ReturnsAsync(true);
 
         OwnerGuestSessionIdResponse result = await _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId);
 
-        Assert.Equal("owner-session", result.GuestSessionId);
-        VerifyNoSessionSaved();
+        GuestSession session = Assert.Single(created);
+        Assert.Equal(OwnerSessionId, session.Id);
+        Assert.True(session.IsOwnerSession);
+        Assert.Equal(OwnerUserId, session.OwnerUserId);
+        Assert.Equal(GroupId, session.GroupReservationId);
+        Assert.Empty(session.Dishes);
+        Assert.Null(session.SessionTokenHash);
+        Assert.False(session.IsSubmitted);
+        Assert.Equal(session.Id, result.GuestSessionId);
+
+        // The create goes only through the conditional put.
+        _mockGuestSessionRepository.Verify(r => r.SaveAsync(It.IsAny<GuestSession>()), Times.Never);
+        VerifyGroupSessionListNotRead();
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetOrCreateOwnerSessionIdAsync_NoOwnerSessionAndGroupActive_CreatesOwnerSessionAndReturnsItsId(bool groupHasGuestSessions)
+    [Fact]
+    public async Task GetOrCreateOwnerSessionIdAsync_ConditionalCreateReportsSessionAlreadyExists_ReturnsDeterministicIdWithoutAnotherCreate()
     {
-        _mockReservationRepository
-            .Setup(r => r.GetReservationByIdAsync(ReservationId))
-            .ReturnsAsync(BuildReservation());
-        _mockGroupReservationRepository
-            .Setup(r => r.GetByReservationIdAsync(ReservationId))
-            .ReturnsAsync(BuildGroup());
-        if (groupHasGuestSessions)
-            SetupSessions(BuildSession("session-a", "Andrii"), BuildSession("session-b", "Olena"));
-        else
-            SetupSessions();
-
-        var saved = new List<GuestSession>();
+        // S9a (AC20): a concurrent call created the session between the lookup and the conditional create.
+        SetupOwnerSessionLookup();
         _mockGuestSessionRepository
-            .Setup(r => r.SaveAsync(It.IsAny<GuestSession>()))
-            .Callback<GuestSession>(saved.Add)
-            .Returns(Task.CompletedTask);
+            .Setup(r => r.TryCreateAsync(It.IsAny<GuestSession>()))
+            .ReturnsAsync(false);
 
         OwnerGuestSessionIdResponse result = await _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId);
 
-        GuestSession created = Assert.Single(saved);
-        Assert.True(created.IsOwnerSession);
-        Assert.Equal(OwnerUserId, created.OwnerUserId);
-        Assert.Equal(GroupId, created.GroupReservationId);
-        Assert.Empty(created.Dishes);
-        Assert.Null(created.SessionTokenHash);
-        Assert.False(created.IsSubmitted);
-        Assert.False(string.IsNullOrWhiteSpace(created.Id));
-        Assert.NotEqual("session-a", created.Id);
-        Assert.Equal(created.Id, result.GuestSessionId);
+        Assert.Equal(OwnerSessionId, result.GuestSessionId);
+        // Exactly one create attempt in total, and it was for the deterministic id.
+        _mockGuestSessionRepository.Verify(r => r.TryCreateAsync(It.IsAny<GuestSession>()), Times.Once);
+        _mockGuestSessionRepository.Verify(r => r.TryCreateAsync(It.Is<GuestSession>(s => s.Id == OwnerSessionId)), Times.Once);
+        _mockGuestSessionRepository.Verify(r => r.SaveAsync(It.IsAny<GuestSession>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetOrCreateOwnerSessionIdAsync_GroupSessionListHasOwnerSessionWithAnotherId_DoesNotReadListAndCreatesDeterministicSession()
+    {
+        // S9b (AC20): no lookup through the group's session list and no fallback for owner sessions with random ids.
+        SetupOwnerSessionLookup();
+        SetupSessions(BuildSession("session-a", "Andrii"), BuildOwnerSession());
+        _mockGuestSessionRepository
+            .Setup(r => r.TryCreateAsync(It.IsAny<GuestSession>()))
+            .ReturnsAsync(true);
+
+        OwnerGuestSessionIdResponse result = await _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId);
+
+        Assert.Equal(OwnerSessionId, result.GuestSessionId);
+        _mockGuestSessionRepository.Verify(r => r.TryCreateAsync(It.IsAny<GuestSession>()), Times.Once);
+        _mockGuestSessionRepository.Verify(r => r.TryCreateAsync(It.Is<GuestSession>(s => s.Id == OwnerSessionId)), Times.Once);
+        VerifyGroupSessionListNotRead();
     }
 
     [Theory]
@@ -1408,18 +1448,13 @@ public class GuestSessionServiceTests
         ReservationStatus reservationStatus,
         Type expectedException)
     {
-        _mockReservationRepository
-            .Setup(r => r.GetReservationByIdAsync(ReservationId))
-            .ReturnsAsync(BuildReservation(reservationStatus));
-        _mockGroupReservationRepository
-            .Setup(r => r.GetByReservationIdAsync(ReservationId))
-            .ReturnsAsync(BuildGroup(groupStatus));
-        SetupSessions(BuildSession("session-a", "Andrii"));
+        // S10 (AC8).
+        SetupOwnerSessionLookup(groupStatus, reservationStatus, storedOwnerSession: null);
 
         await Assert.ThrowsAsync(expectedException, () =>
             _guestSessionService.GetOrCreateOwnerSessionIdAsync(OwnerUserId, ReservationId));
 
-        VerifyNoSessionSaved();
+        VerifyNoOwnerSessionCreated();
     }
 
     // ---- Owner session excluded from guest counts (S12, AC9) ----
