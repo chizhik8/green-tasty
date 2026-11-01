@@ -26,6 +26,10 @@ syndicate_venv/
 __pycache__/
 *.py[cod]
 
+# Claude Code (personal)
+.claude/settings.local.json
+CLAUDE.local.md
+
 # Local Syndicate configuration
 .syndicate-config*/
 

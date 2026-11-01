@@ -1,15 +1,21 @@
 using APIHandler.Constants;
+using APIHandler.Constants.Dishes;
+using APIHandler.Constants.Orders;
 using APIHandler.Entities;
 using APIHandler.Exceptions;
 using APIHandler.Models.GroupReservation;
 using APIHandler.Models.GuestReservation;
+using APIHandler.Repositories.Dishes;
 using APIHandler.Repositories.GroupReservations;
 using APIHandler.Repositories.GuestSessions;
+using APIHandler.Repositories.Orders;
 using APIHandler.Repositories.Reservations;
 using APIHandler.Repositories.Tables;
 using APIHandler.Services.Auth;
 using APIHandler.Services.Locations;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace APIHandler.Services.GroupReservations;
@@ -20,7 +26,9 @@ public class GroupReservationService(
     IReservationRepository reservationRepository,
     IGuestSessionRepository guestSessionRepository,
     IUserService userService,
-    ILocationService locationService) : IGroupReservationService
+    ILocationService locationService,
+    IDishRepository dishRepository,
+    IOrderRepository orderRepository) : IGroupReservationService
 {
     private const string DefaultRestaurantName = "Green & Tasty";
 
@@ -33,10 +41,11 @@ public class GroupReservationService(
             throw new GroupReservationExpiredException();
 
         Task<Reservation?> reservationTask = reservationRepository.GetReservationByIdAsync(groupReservation.ReservationId);
-        Task<int> countTask = guestSessionRepository.CountByGroupReservationId(groupReservation.GroupReservationId);
+        // Owner sessions are not joined guests and do not count toward the guest limit.
+        Task<int> joinedGuestsCountTask = guestSessionRepository.CountJoinedGuestsByGroupReservationIdAsync(groupReservation.GroupReservationId);
 
         Reservation reservation = await reservationTask ?? throw new ValidationException("Associated reservation not found.");
-        int joinedGuestsCount = await countTask;
+        int joinedGuestsCount = await joinedGuestsCountTask;
 
         if (joinedGuestsCount + 1 >= reservation.GuestCount)
             throw new GuestLimitExceededException();
@@ -141,6 +150,105 @@ public class GroupReservationService(
             throw new GroupReservationExpiredException();
 
         return new GetGroupInviteTokenResponse(groupReservation.ReservationToken);
+    }
+
+    public async Task<IReadOnlyList<SubmittedGroupDishResponse>> SubmitGroupReservationAsync(string userId, string groupReservationId, string reservationId)
+    {
+        GroupReservation groupReservation = await groupReservationRepository.GetGroupReservationByIdAsync(groupReservationId)
+            ?? throw new GroupReservationNotFoundException();
+
+        if (groupReservation.ReservationId != reservationId)
+            throw new ValidationException($"Reservation '{reservationId}' does not belong to group reservation '{groupReservationId}'.");
+
+        Reservation reservation = await reservationRepository.GetReservationByIdAsync(groupReservation.ReservationId)
+            ?? throw new ReservationNotFoundException($"Reservation {reservationId} was not found.");
+
+        GroupPreOrderGuards.EnsureReservationOwner(reservation, userId);
+
+        GroupPreOrderGuards.EnsureGroupIsActive(groupReservation, reservation);
+
+        GroupPreOrderGuards.EnsureBeforePreOrderCutoff(reservation);
+
+        List<GuestSession> submittedSessions = (await guestSessionRepository.GetAllByGroupReservationIdAsync(groupReservationId) ?? [])
+            .Where(s => s.IsSubmitted)
+            .ToList();
+
+        if (submittedSessions.Count == 0)
+            throw new ValidationException("No participant has submitted a cart yet.");
+
+        List<OrderItem> submittedLines = submittedSessions
+            .SelectMany(s => s.Dishes ?? [])
+            .ToList();
+
+        string[] dishIds = submittedLines
+            .Select(l => l.DishId)
+            .Distinct()
+            .ToArray();
+
+        HashSet<string> availableDishIds = (await dishRepository.GetDishesByIdsAsync(dishIds) ?? [])
+            .Where(d => d.State == DishState.Available)
+            .Select(d => d.Id)
+            .ToHashSet();
+
+        // Dishes that no longer exist or are not available are left out of the consolidated pre-order.
+        List<SubmittedGroupDishResponse> consolidatedDishes = submittedLines
+            .Where(l => availableDishIds.Contains(l.DishId))
+            .GroupBy(l => l.DishId)
+            .Select(g => new SubmittedGroupDishResponse(g.Key, g.Sum(l => l.Quantity)))
+            .ToList();
+
+        if (consolidatedDishes.Count == 0)
+            throw new ValidationException("The submitted carts contain no available dishes.");
+
+        var order = await orderRepository.GetOrderByReservationIdAsync(reservation.Id)
+            ?? throw new ValidationException($"No active order was found for reservation '{reservation.Id}'.");
+
+        order.Dishes ??= [];
+
+        foreach (SubmittedGroupDishResponse consolidatedDish in consolidatedDishes)
+        {
+            OrderItem? existingItem = order.Dishes.FirstOrDefault(d => d.DishId == consolidatedDish.DishId);
+
+            if (existingItem is not null)
+            {
+                existingItem.Quantity += consolidatedDish.Quantity;
+            }
+            else
+            {
+                order.Dishes.Add(new OrderItem
+                {
+                    DishId = consolidatedDish.DishId,
+                    Quantity = consolidatedDish.Quantity,
+                    State = OrderItemState.Pending
+                });
+            }
+        }
+
+        order.Status = OrderStatus.SubmittedByCustomer;
+        groupReservation.Status = GroupReservationStatus.Submitted;
+
+        // One transaction, conditioned on the group still being Open: a concurrent or repeated submit
+        // writes nothing, so the dishes are never added to the order twice.
+        bool written = await groupReservationRepository.TryUpdateStatusWithOrderAsync(groupReservation, GroupReservationStatus.Open, order);
+        if (!written)
+            await ThrowGroupNoLongerOpenAsync(groupReservationId);
+
+        return consolidatedDishes;
+    }
+
+    /// <summary>
+    /// Called when the submit transaction was canceled because the group was no longer <c>Open</c>:
+    /// re-reads the group and throws the error matching its current status.
+    /// </summary>
+    private async Task ThrowGroupNoLongerOpenAsync(string groupReservationId)
+    {
+        GroupReservation? current = await groupReservationRepository.GetGroupReservationByIdAsync(groupReservationId);
+
+        if (current is not null)
+            GroupPreOrderGuards.EnsureGroupIsOpen(current);
+
+        throw new InvalidOperationException(
+            $"The submit of group reservation '{groupReservationId}' was rejected because the group is no longer open, but its current status is '{current?.Status.ToString() ?? "not found"}'.");
     }
 }
 

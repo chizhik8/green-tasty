@@ -3,9 +3,9 @@
 Booking tables, reservations and pre-orders for three roles: **client**, **waiter**, **admin**.
 Standalone components, SCSS, Karma + Jasmine. Deploy target: S3 static hosting.
 
-This file is the single source of truth for frontend work. The backend has no `CLAUDE.md` yet — documenting it is a separate task.
+This file is the single source of truth for frontend work. Repository-wide rules (AWS region, deployment, what never to commit) are in the root `AGENTS.md`; backend instructions are in `backend/restaurant-backend-app/AGENTS.md`.
 
-**The backend cannot be run locally.** No Docker, no LocalStack, no `dotnet run` host. Frontend work runs against an already-deployed API Gateway URL; any backend change requires a real `syndicate deploy` by whoever owns that task. When a frontend model disagrees with an API response, `backend/restaurant-backend-app/docs/ApiRoutes.md` and `dnapp/lambdas/api-handler/Routing/RouteRegistry.cs` win over the frontend interface. Region note: the backend config deploys to `us-west-1` while the frontend dev environment points at an API in `eu-west-1`.
+**The backend cannot be run locally.** No Docker, no LocalStack, no `dotnet run` host. Frontend work runs against an already-deployed API Gateway URL; any backend change requires a real `syndicate deploy` by whoever owns that task. When a frontend model disagrees with an API response, `backend/restaurant-backend-app/docs/ApiRoutes.md` and `dnapp/lambdas/api-handler/Routing/RouteRegistry.cs` win over the frontend interface. Region: everything is deployed in `eu-north-1`, including the API that `environment.development.ts` points at.
 
 ---
 
@@ -35,8 +35,8 @@ BACKEND_URL=https://<api-id>.execute-api.<region>.amazonaws.com/develop npm run 
 | `npm start` | dev server, `development` config |
 | `npm run build` | **production** config (it is the `defaultConfiguration`); requires `BACKEND_URL` |
 | `npm test` | Karma + Jasmine, needs Chrome |
-| `npm run lint` | 216 pre-existing violations — see [§8](#8-known-debt-measured--re-check-do-not-re-measure) |
-| `npm run lint-fix` | ~40 of them auto-fix |
+| `npm run lint` | many pre-existing violations — see [§8](#8-known-debt-archive-baseline) |
+| `npm run lint-fix` | auto-fixes part of them |
 | `npm run format` | Prettier over `src/**/*.{ts,html,scss}` |
 
 ---
@@ -117,7 +117,7 @@ Rules: **one interface file per concern** — never declare an interface inside 
 - **TypeScript strict mode** (`strict`, `noImplicitOverride`, `noImplicitReturns`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch`). No `any`; the 11 existing violations are debt, do not add more.
 - **SCSS:** `@use`, never `@import`. Namespaced colour functions — `color.adjust($c, $lightness: -10%)`, not the deprecated `darken()`.
 - **File naming:** `*.component.ts`, `*.service.ts`, `*.model.ts`, `*.guard.ts`, `*.resolver.ts`, `*.store.ts`, `*.spec.ts`.
-- **Relative imports** are the current norm (`../../services/...`). Count the `../` levels — wrong depth is the single most common way this repo has been broken.
+- **Imports:** both relative imports (`../../services/...`) and the `@app/*` alias (`@app/services/...`, defined in `tsconfig.json` `paths`) are in use. A bare `app/...` path (without `@`) does not resolve. With relative imports, count the `../` levels — wrong depth is the single most common way this repo has been broken.
 - **`ChangeDetectionStrategy.Eager`** is what all 45 components use today. Do not flip individual components to `OnPush` in unrelated PRs; it is a coordinated migration.
 
 ### Target state — agreed direction, not yet reality
@@ -131,7 +131,7 @@ Check before relying on any of these, and introduce them only inside the task th
 | Fully zoneless | `zone.js` still in `angular.json` polyfills (build **and** test) | #31 Ensure application is fully zoneless |
 | `OnPush` everywhere | 45× `ChangeDetectionStrategy.Eager` | #31 |
 | `@Service` instead of `@Injectable` | 16× `@Injectable` | #10 |
-| `app/...` absolute imports | no `baseUrl`/`paths` in any tsconfig — `app/...` will not resolve | #24, #51 (duplicates, merge them) |
+| Absolute imports | `tsconfig.json` has `baseUrl` and the `@app/*` alias, already used alongside relative imports; `@app/...` resolves, bare `app/...` does not | #24, #51 (duplicates, merge them) |
 | `httpResource()` for GETs | every service uses `HttpClient` | — |
 | Barrel `index.ts` per folder | 0 barrels | #5 |
 
@@ -141,7 +141,7 @@ Claims that circulate in older notes and are **false for this repo**: there is n
 
 ## 6. Testing — required, not optional
 
-Baseline today: 56 `.spec.ts` files, 57 `it()` blocks, of which **11 are untouched CLI stubs** (`should be created`), and only **1** spec configures providers. This is a floor to raise, not a norm to copy.
+The existing test suite is weak: many specs are untouched CLI stubs (`should be created`) and few configure providers (numbers in [§8](#8-known-debt-archive-baseline)). This is a floor to raise, not a norm to copy.
 
 ### What must be covered
 
@@ -188,21 +188,22 @@ npm test -- --watch=false
 - **Type every HTTP call** — `this.http.get<LocationResponse[]>(url)`. Never `get<any>`.
 - **Errors reach the user**, not just the console — surface them via `services/toast/toast.service.ts`.
 - **No business logic in templates.** Precompute in the component; template expressions run on every change detection cycle.
-- **Keyboard parity for every `(click)`** — add `(keydown.enter)` and `tabindex`, or use a `<button>`. This is 98 of the 216 lint errors; do not add the 99th.
-- **Watch the bundle.** 915.96 kB against a **1 MB hard error budget** — about 84 kB of headroom. Import heavy libraries lazily or not at all; read the size line printed by every build.
+- **Keyboard parity for every `(click)`** — add `(keydown.enter)` and `tabindex`, or use a `<button>`. These a11y rules are the largest group of existing lint errors (§8); do not add more.
+- **Watch the bundle.** The initial bundle is close to the **1 MB hard error budget** (last known size in §8). Import heavy libraries lazily or not at all; read the size line printed by every build.
 - **No new npm packages without asking.** Three date libraries (`moment`, `dayjs`, `date-fns`) are already installed — reuse, do not add a fourth.
 - **Every data-driven screen needs empty / loading / error states.** A freshly deployed backend has empty DynamoDB tables, so "no data" is a normal case, not an edge case.
 - **When a model disagrees with the API**, check `backend/restaurant-backend-app/docs/ApiRoutes.md` and `RouteRegistry.cs` — the backend is the source of truth.
 
 ---
 
-## 8. Known debt (measured — re-check, do not re-measure)
+## 8. Known debt (archive baseline)
+
+This is the only place for measured numbers in this file. Unless a line gives a date, a number came with the project archive and when it was measured is unknown. Treat these numbers as an approximate baseline and re-measure before you quote one.
 
 **Build economics**
 
 - Initial bundle **915.96 kB** raw / 210 kB transfer. Budgets: warning 500 kB (exceeded), **error 1 MB (~84 kB headroom)**.
 - 5 component stylesheets exceed the 4 kB style budget (`header.component.scss` at 8.15 kB is worst; error threshold 10 kB).
-- The production build **inlines Google Fonts over the network**. Fine on a laptop, `403` and a failed build in a restricted CI. Fix when needed: `"optimization": { "fonts": { "inline": false } }` or self-host Poppins.
 - `dist` ≈ **69 MB**, ~60 MB of it `assets/img`, individual JPEGs up to 12 MB. Unoptimised.
 - CommonJS bailouts: `dayjs`, `dayjs/plugin/*` (via `ngx-daterangepicker-bootstrap`), `qr-code-styling`.
 - `npm audit`: 17 vulnerabilities (12 high). Do **not** run `npm audit fix` blindly on Angular 22.
@@ -211,11 +212,11 @@ npm test -- --watch=false
 
 - `npm run lint`: 216 errors / 1 warning — a11y `click-events-have-key-events` 50, `interactive-supports-focus` 48, `prefer-inject` 43, `no-inferrable-types` 22, `no-unused-vars` 14, `no-explicit-any` 11, `prefer-const` 9, `no-var` 7, template `eqeqeq` 6. Worst files: `header.component.html` (26), `waiter-make-reservation.component.html` (11), `date-helpers.ts` (10).
 - Prettier: 66 files unformatted.
-- 11 spec files are still CLI stubs; only 1 spec sets up providers.
+- Tests (archive): 56 `.spec.ts` files, 57 `it()` blocks, 11 untouched CLI stubs, 1 spec that configures providers. On 2026-10-29 there were 62 `.spec.ts` files; the other test numbers were not re-counted.
 
 **Missing infrastructure**
 
-No CI, no branch protection, no `.nvmrc`/`engines`, no `buildspec.yml`/`amplify.yml`. Until the pipeline exists (board: `[DO] Implement Github Actions CI/CD pipeline`), the four gates in §6 are the only thing standing between a broken build and `main`. It has already reached `main` twice.
+No CI, no branch protection, no `buildspec.yml`/`amplify.yml`. Until the pipeline exists (board: `[DO] Implement Github Actions CI/CD pipeline`), the four gates in §6 are the only thing standing between a broken build and `main`. It has already reached `main` twice.
 
 ---
 
@@ -223,7 +224,7 @@ No CI, no branch protection, no `.nvmrc`/`engines`, no `buildspec.yml`/`amplify.
 
 1. **Import depth.** `../` vs `../../` broke `main` for everyone — compile before pushing.
 2. **`npm install` vs `npm ci`.** A desynced lockfile let `npm install` pass while `npm ci` failed; CI would have broken and nobody would have noticed locally.
-3. **Node version.** Angular 22 needs Node ≥ 20.19. Nothing in the repo enforces it yet; local dev runs Node 22.
+3. **Node version.** `.nvmrc` pins `24.16.0`; `package.json` `engines` allows `^22.22.3 || ^24.15.0`. There is no `.npmrc` with `engine-strict`, so npm only warns on a mismatch — check `node -v` before building.
 4. **Dead code hides breakage** — see the `tsconfig.app.json` note in §6.
 5. **macOS case-insensitivity.** `import './UserService'` for `user.service.ts` builds locally and fails on Linux CI. Verify on Linux before pushing:
    `docker run --rm -v "$PWD":/app -w /app public.ecr.aws/docker/library/node:22-alpine sh -lc "npm ci && BACKEND_URL=https://example.com npm run build"`

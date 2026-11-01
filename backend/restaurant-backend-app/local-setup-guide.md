@@ -12,7 +12,7 @@ Before deploying the project, make sure you have an AWS account and a user with 
 
 Create or use an AWS account for development.
 
-- AWS account: `https://us-east-1.console.aws.amazon.com`
+- AWS account: `https://eu-north-1.console.aws.amazon.com`
 
 ### 1.2 Create an IAM user
 
@@ -50,7 +50,7 @@ When prompted, provide:
 
 - **AWS Access Key ID**
 - **AWS Secret Access Key**
-- **Default region** (for example: `us-east-1`)
+- **Default region**: `eu-north-1` (the only region this project uses)
 
 ---
 
