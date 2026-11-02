@@ -1126,15 +1126,37 @@ Response: `200 OK`
 ## Group & Guest Reservations
 
 ### `GET` /guest/invites/{token}
-Response: `200 OK`
+Returns the invitation details for a group reservation token.
+
+Authorization: none (`NONE`).
+
+Response: `200 OK`. Field names are PascalCase (the handler uses `ResponseBuilder.CreateSuccessResponse`, which keeps C# property names).
 ```json
 {
-  "groupReservationId": "string",
-  "restaurantName": "string",
-  "locationAddress": "string",
-  "startTime": "2026-08-07T19:00:00Z"
+  "GroupReservationId": "string",
+  "LocationId": "string",
+  "RestaurantName": "Green & Tasty",
+  "LocationAddress": "string",
+  "StartTime": "2026-08-07T19:00:00",
+  "EndTime": "2026-08-07T20:30:00",
+  "MaxGuestCount": 4,
+  "TableNumber": 1,
+  "InviterName": "string"
 }
 ```
+
+- `RestaurantName`: always `Green & Tasty`.
+- `LocationAddress`: `Unknown Address` if the location is not found.
+- `StartTime`, `EndTime`: the reservation times as ISO 8601 strings (the default `System.Text.Json` `DateTime` format; whether an offset suffix is present depends on the `DateTime` kind loaded from DynamoDB).
+- `MaxGuestCount`: the reservation's `guestCount`, the owner included.
+- `InviterName`: the reservation owner's name, or `Unknown`.
+
+Errors, in the order they are checked:
+- `404` `{ "error": "..." }`: no group reservation has this token.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is not `Open`.
+- `400` `{ "message": "...", "errorCode": "Unknown" }`: the group's reservation does not exist.
+- `400` `{ "message": "...", "errorCode": "GuestLimitExceeded" }`: joined guest sessions (owner sessions excluded) + 1 for the owner >= `guestCount`.
+- `500` `{ "error": "Internal Server Error" }`: the reservation's table does not exist.
 
 ### `POST` /guest/sessions
 Request body:
@@ -1220,15 +1242,27 @@ Response: 200 OK
 }
 ```
 
-### `GET` /group-reservations/{groupReservationId}/status
-Response: 200 OK
+### `GET` /guest/groups/{groupReservationId}/status
+Returns the group status and the participant count.
+
+Authorization: none (`NONE`).
+
+Response: `200 OK`
 ```json
 {
-  "status": "string",
-  "totalGuests": 4,
-  "submittedGuests": 3
+  "currentParticipants": 3,
+  "maxCapacity": 4,
+  "status": "Open"
 }
 ```
+
+- `currentParticipants`: joined guest sessions (owner sessions excluded) + 1 for the owner, whether or not an owner session exists.
+- `maxCapacity`: the reservation's `guestCount`.
+- `status`: `Open`, `Submitted` or `Closed`.
+
+Errors:
+- `404` `{ "error": "..." }`: the group reservation does not exist.
+- `500` `{ "error": "Internal server error: ..." }`: the group's reservation does not exist, or another unexpected error.
 
 ### `POST` /group-reservations/{groupReservationId}/submit
 Submits the consolidated group pre-order to the reservation's order. Only sessions with `isSubmitted: true` are used (guest and owner sessions alike). Cart lines whose dish no longer exists or whose state is not `Available` are dropped, and lines with the same `dishId` are merged by summing `quantity`. The result is added to the active order of the reservation: the quantity is added to an existing order line with the same `dishId` (its state is kept), other dishes are appended as `Pending`. The order status becomes `SubmittedByCustomer` and the group reservation status becomes `Submitted`; both are written in one transaction, only if the group is still `Open`, so a second or concurrent submit of the same group does not add the dishes again. The submit is allowed only up to 30 minutes before the reservation start. Nothing is saved when any check fails.

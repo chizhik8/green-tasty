@@ -232,7 +232,7 @@ Three artifacts describe the API, and a change to it must reach all three:
 
 Today the first two agree: every gateway method has a matching Lambda route. The former singular gateway path `/guest/group/{groupReservationId}/sessions` was renamed to `/guest/groups/{groupReservationId}/sessions`, which now has a route.
 
-`ApiRoutes.md` also describes an endpoint that exists in neither the gateway nor `RouteRegistry`: `GET /group-reservations/{groupReservationId}/status`. The implemented status endpoint is `GET /guest/groups/{groupReservationId}/status`.
+`ApiRoutes.md` used to describe a status endpoint that exists in neither the gateway nor `RouteRegistry` (`GET /group-reservations/{groupReservationId}/status`) and camelCase fields for `GET /guest/invites/{token}`. Both were corrected on 2026-11-02: it now documents `GET /guest/groups/{groupReservationId}/status` and the PascalCase invite fields the handler returns.
 
 ### 7.2 Request and response conventions
 

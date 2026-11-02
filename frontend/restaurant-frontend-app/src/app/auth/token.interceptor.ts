@@ -11,6 +11,9 @@ import { AuthenticationService } from './services/authentication.service';
 import { SKIP_ERROR_TOAST } from './skip-error-toast.context';
 import { getServerErrorMessage } from '../shared/helpers/http-error-helpers';
 
+// Owner-only endpoints under /guest/ (group sessions list and Remove Guest) need the Cognito token.
+const OWNER_GROUP_SESSIONS_URL = /\/guest\/groups\/[^/]+\/sessions(\/[^/]+)?$/;
+
 export const tokenInterceptor: HttpInterceptorFn = (
   req: HttpRequest<unknown>,
   next: HttpHandlerFn
@@ -20,10 +23,14 @@ export const tokenInterceptor: HttpInterceptorFn = (
   // IMPORTANT: do not modify Guest endpoints at all.
   // Guest flow uses a different token (guest session token) and we must not touch the body.
   // Otherwise we break POST /guest/sessions payload.
-  if (req.url.includes('/guest/')) {
+  if (req.url.includes('/guest/') && !OWNER_GROUP_SESSIONS_URL.test(req.url.split('?')[0])) {
     return next(req).pipe(
       catchError((error: HttpErrorResponse) => {
         console.log(error);
+
+        if (req.context.get(SKIP_ERROR_TOAST)) {
+          return throwError(() => error);
+        }
 
         let errorMessage = 'An unexpected error occurred.';
         if (error.error && typeof error.error === 'string') {

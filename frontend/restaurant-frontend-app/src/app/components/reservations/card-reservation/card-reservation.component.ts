@@ -8,7 +8,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { Params, Router } from '@angular/router';
+import { Params, Router, RouterLink } from '@angular/router';
 
 import { CreateOrderRequest } from '@app/models/cart/create-order-request.model';
 import {
@@ -36,6 +36,7 @@ interface WaiterPreOrderNavigationData {
   standalone: true,
   imports: [
     DatePipe,
+    RouterLink,
     CustomSelectComponent,
     PlaceOrderWaiterComponent,
   ],
@@ -133,6 +134,16 @@ export class CardReservationComponent {
     return (
       this.preOrderItemCount() > 0 ||
       this.creatorRole() === Roles.WAITER
+    );
+  });
+
+  readonly canOpenGroupPreOrder = computed(() => {
+    const reservation = this.r();
+
+    return (
+      this.role() === Roles.CUSTOMER &&
+      reservation.status === ReservationStatusCustomer.Reserved &&
+      reservation.guestCount >= 2
     );
   });
 
