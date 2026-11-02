@@ -551,12 +551,25 @@ Response: `200 OK`
 ```
 
 ### `GET` /reservations/{reservationId}/invite-token
+Returns the group invite token of the reservation. The token is returned while the group is `Open` and also after it is `Submitted`, so the owner can reopen the group pre-order page through `GET /guest/invites/{token}`.
+
+Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
+
 Response: `200 OK`
 ```json
 {
   "token": "string"
 }
 ```
+
+Errors, in the order they are checked:
+- `401` `{ "error": "Unauthorized." }`: no `sub` claim.
+- `404` `{ "error": "..." }`: the reservation does not exist.
+- `403` `{ "error": "Only the reservation owner can perform this action." }`: the caller does not own the reservation. Checked right after the reservation lookup, before any other check, so a non-owner learns nothing about the reservation's state.
+- `400` `{ "message": "...", "errorCode": "Unknown" }`: the reservation has fewer than two guests.
+- `400` `{ "message": "The group reservation is expired.", "errorCode": "GroupReservationExpired" }`: the reservation is not `Reserved`.
+- `404` `{ "error": "..." }`: the reservation has no group reservation.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is `Closed`.
 
 ### `GET` /reservations/{reservationId}/feedback
 Response: `200 OK`
@@ -1126,7 +1139,7 @@ Response: `200 OK`
 ## Group & Guest Reservations
 
 ### `GET` /guest/invites/{token}
-Returns the invitation details for a group reservation token.
+Returns the invitation details for a group reservation token. It is a plain read of the invite, used by the guest page (`/join/:token`) and by the owner's group pre-order page: it answers for `Open` and `Submitted` groups and does not apply the guest limit. The guest limit is checked only by `POST /guest/sessions`; `Status` and `AvailableSpots` let each page decide what to show.
 
 Authorization: none (`NONE`).
 
@@ -1141,7 +1154,9 @@ Response: `200 OK`. Field names are PascalCase (the handler uses `ResponseBuilde
   "EndTime": "2026-08-07T20:30:00",
   "MaxGuestCount": 4,
   "TableNumber": 1,
-  "InviterName": "string"
+  "InviterName": "string",
+  "Status": "Open",
+  "AvailableSpots": 1
 }
 ```
 
@@ -1150,13 +1165,16 @@ Response: `200 OK`. Field names are PascalCase (the handler uses `ResponseBuilde
 - `StartTime`, `EndTime`: the reservation times as ISO 8601 strings (the default `System.Text.Json` `DateTime` format; whether an offset suffix is present depends on the `DateTime` kind loaded from DynamoDB).
 - `MaxGuestCount`: the reservation's `guestCount`, the owner included.
 - `InviterName`: the reservation owner's name, or `Unknown`.
+- `Status`: the group status as a string, `Open` or `Submitted` (a `Closed` group returns an error, see below).
+- `AvailableSpots`: how many more guests can join now. For an `Open` group: `max(0, guestCount − 1 − joinedGuests)`, where `joinedGuests` is the number of joined guest sessions (owner sessions excluded) and `1` is the owner's reserved place. This is the same rule as `POST /guest/sessions`: a join succeeds exactly when `AvailableSpots > 0`. The value is a snapshot; a concurrent join can still take the last place. For a `Submitted` group: `0`.
 
 Errors, in the order they are checked:
 - `404` `{ "error": "..." }`: no group reservation has this token.
-- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is not `Open`.
-- `400` `{ "message": "...", "errorCode": "Unknown" }`: the group's reservation does not exist.
-- `400` `{ "message": "...", "errorCode": "GuestLimitExceeded" }`: joined guest sessions (owner sessions excluded) + 1 for the owner >= `guestCount`.
+- `400` `{ "message": "...", "errorCode": "GroupReservationExpired" }`: the group is `Closed` (the reservation was cancelled, completed or otherwise is no longer `Reserved`).
+- `400` `{ "message": "Associated reservation not found.", "errorCode": "Unknown" }`: the group's reservation does not exist.
 - `500` `{ "error": "Internal Server Error" }`: the reservation's table does not exist.
+
+A full group is not an error here: it returns `200` with `AvailableSpots: 0` (this endpoint no longer returns `400 GuestLimitExceeded`).
 
 ### `POST` /guest/sessions
 Request body:
