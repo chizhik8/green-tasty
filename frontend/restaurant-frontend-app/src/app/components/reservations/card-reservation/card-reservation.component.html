@@ -170,6 +170,15 @@
             Pre-order
           </button>
         }
+
+        @if (canOpenGroupPreOrder()) {
+          <a
+            class="button button--secondary button--large"
+            [routerLink]="['/reservations', r().id, 'group-order']"
+          >
+            Group Pre-Order
+          </a>
+        }
       }
 
       @case (ReservationStatusCustomer.InProgress) {

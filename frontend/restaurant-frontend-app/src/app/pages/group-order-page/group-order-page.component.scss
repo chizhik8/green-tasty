@@ -1,0 +1,172 @@
+@use 'app/shared/styles/abstracts/colors' as color;
+
+$gap: 16px;
+$gap-large: 24px;
+$radius: 8px;
+
+:host {
+  display: block;
+  background-color: color.$neutral-100;
+}
+
+.page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: $gap-large;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px $gap;
+}
+
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: $gap;
+  padding-bottom: $gap;
+  border-bottom: 1px solid color.$green-150;
+}
+
+.title-row,
+.sync,
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.title-row,
+.sync {
+  gap: 8px $gap;
+}
+
+.page-title {
+  font-size: 26px;
+  line-height: 40px;
+}
+
+.badge {
+  padding: 0 12px;
+  border-radius: $radius;
+  font-size: 12px;
+  background-color: color.$neutral-200;
+
+  &[data-status='Open'] {
+    background-color: color.$green-100;
+  }
+
+  &[data-status='Submitted'] {
+    background-color: color.$orange-100;
+  }
+}
+
+.meta {
+  gap: 8px $gap-large;
+}
+
+.meta,
+.participants,
+.lines {
+  list-style: none;
+}
+
+.meta-item,
+.banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-text,
+.muted {
+  color: color.$neutral-600;
+}
+
+.banner {
+  padding: 12px $gap;
+  background-color: color.$orange-30;
+  border: 1px solid color.$orange-100;
+  border-radius: $radius;
+}
+
+.participants {
+  display: flex;
+  flex-direction: column;
+  gap: $gap-large;
+}
+
+.consolidated {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: $gap;
+  background-color: color.$neutral-0;
+  border-radius: $radius;
+}
+
+.section-title {
+  font-size: 18px;
+  line-height: 32px;
+}
+
+.line,
+.grand-total {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px $gap;
+}
+
+.line {
+  padding: 8px 0;
+  border-bottom: 1px solid color.$neutral-100;
+  overflow-wrap: anywhere;
+}
+
+.grand-total {
+  padding-top: $gap;
+  border-top: 2px solid color.$green-150;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 40px;
+}
+
+.grand-total-value {
+  color: color.$green-600;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $gap;
+}
+
+// The shared disabled grey is below 4.5:1 with white text.
+.submit:disabled {
+  background-color: color.$neutral-600;
+  border-color: color.$neutral-600;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: $gap;
+  width: 100%;
+}
+
+.danger {
+  color: color.$red-400;
+  background-color: color.$neutral-0;
+  border-color: color.$red-400;
+
+  &:hover:not(:disabled) {
+    background-color: color.$red-30;
+  }
+
+  &:disabled {
+    color: color.$neutral-600;
+    border-color: color.$neutral-200;
+  }
+}
