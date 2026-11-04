@@ -5,8 +5,16 @@ import { GuestInviteService } from '@app/services/reservation/guest-invite.servi
 import { GuestInvite } from '@app/models/reservations/guest-invite.model';
 import { GuestMenuDish } from '@app/services/guest-sessions/guest-sessions.service';
 import { GuestSessionsService } from '@app/services/guest-sessions/guest-sessions.service';
+import { ToastService } from '@app/services/toast/toast.service';
+import { getServerErrorMessage } from '@app/shared/helpers/http-error-helpers';
 
 export type GuestPreorderStatus = 'active' | 'submitted';
+
+export const PREORDER_CLOSED_MESSAGE = 'Pre-order is closed, changes are no longer possible';
+
+function hasErrorCode(error: unknown, status: number, errorCode: string): boolean {
+    return error instanceof HttpErrorResponse && error.status === status && error.error?.errorCode === errorCode;
+}
 
 export interface GuestInviteVm {
     inviterName: string;
@@ -40,9 +48,12 @@ export class GuestPreorderStore {
     readonly cartItems = signal<GuestCartItem[]>([]);
 
     private readonly guestSessionsService = inject(GuestSessionsService);
+    private readonly toast = inject(ToastService);
 
     readonly joinLoading = signal(false);
     readonly joinError = signal<string | null>(null);
+    /** `POST /guest/sessions` answered `GuestLimitExceeded`: someone took the last place first. */
+    private readonly joinRejectedAsFull = signal(false);
 
     readonly guestSessionId = signal<string | null>(null);
     readonly guestSessionToken = signal<string | null>(null);
@@ -60,6 +71,15 @@ export class GuestPreorderStore {
     readonly total = computed(() =>
         this.cartItems().reduce((sum, i) => sum + i.price * i.qty, 0)
     );
+
+    readonly hasSession = computed(() => !!this.guestSessionId() && !!this.guestSessionToken());
+    readonly isClosed = computed(() => this.invite()?.Status === 'Submitted');
+    /** A browser that already joined keeps its cart, however many places are left. */
+    readonly isFull = computed(() => {
+        if (this.hasSession()) return false;
+        const inv = this.invite();
+        return this.joinRejectedAsFull() || (inv?.Status === 'Open' && inv.AvailableSpots === 0);
+    });
 
     constructor() {
         effect(() => {
@@ -81,7 +101,6 @@ export class GuestPreorderStore {
         if (this.contextId() === id) return;
 
         this.contextId.set(id);
-        void this.loadInviteByToken(id);
 
         const name = localStorage.getItem(this.key(id, 'guestName'));
         const cartRaw = localStorage.getItem(this.key(id, 'cart'));
@@ -92,10 +111,8 @@ export class GuestPreorderStore {
         if (sessionId) this.guestSessionId.set(sessionId);
         if (sessionToken) this.guestSessionToken.set(sessionToken);
 
-        // If guest was already joined on this device/browser, load menu automatically
-        if (this.guestSessionId() && this.guestSessionToken()) {
-            void this.loadMenu();
-        }
+        // The stored session is known before the invite arrives, so the invite decides about the menu.
+        void this.loadInviteByToken(id);
 
         if (name) this.guestName.set(name);
 
@@ -114,14 +131,21 @@ export class GuestPreorderStore {
         this.inviteError.set(null);
 
         try {
-            const inv = await firstValueFrom(this.guestInviteService.getInvite$(token));
+            // The page shows every invite error itself, so the interceptor toast is off.
+            const inv = await firstValueFrom(this.guestInviteService.getInvite$(token, { silent: true }));
             this.invite.set(inv);
         } catch (error) {
             this.invite.set(null);
             const status = error instanceof HttpErrorResponse ? error.status : null;
-            this.inviteError.set(status === 404 || status === 410 ? 'expired' : 'retryable');
+            const expired = status === 404 || status === 410 || hasErrorCode(error, 400, 'GroupReservationExpired');
+            this.inviteError.set(expired ? 'expired' : 'retryable');
         } finally {
             this.inviteLoading.set(false);
+        }
+
+        // If guest was already joined on this device/browser, load menu automatically (not after Submit)
+        if (this.invite()?.Status === 'Open' && this.hasSession()) {
+            await this.loadMenu();
         }
     }
 
@@ -151,13 +175,20 @@ export class GuestPreorderStore {
         this.joinError.set(null);
 
         try {
-            const res = await firstValueFrom(this.guestSessionsService.createSession(payload));
+            // Silent: a full group gets its own block, any other error a toast from here.
+            const res = await firstValueFrom(this.guestSessionsService.createSession(payload, { silent: true }));
             this.guestSessionId.set(res.SessionId);
             this.guestSessionToken.set(res.SessionToken);
             await this.loadMenu();
         } catch (e) {
             console.log('[join error]', e);
-            this.joinError.set('Failed to join session');
+            if (hasErrorCode(e, 400, 'GuestLimitExceeded')) {
+                this.joinRejectedAsFull.set(true);
+            } else {
+                this.joinError.set('Failed to join session');
+                const message = e instanceof HttpErrorResponse ? getServerErrorMessage(e) : '';
+                this.toast.error(message || 'Failed to join session', 'Error');
+            }
         } finally {
             this.joinLoading.set(false);
         }
@@ -278,8 +309,10 @@ export class GuestPreorderStore {
         try {
             await firstValueFrom(this.guestSessionsService.submit(sessionId, token));
             this.submitSuccess();
-        } catch {
-            this.cartError.set('Could not submit your pre-order. Please try again.');
+        } catch (error) {
+            this.cartError.set(this.isConflict(error)
+                ? PREORDER_CLOSED_MESSAGE
+                : 'Could not submit your pre-order. Please try again.');
         } finally {
             this.cartBusy.set(false);
         }
@@ -351,12 +384,19 @@ export class GuestPreorderStore {
             await firstValueFrom(request);
             updateLocalCart();
             return true;
-        } catch {
-            this.cartError.set('Could not update your cart. Please try again.');
+        } catch (error) {
+            this.cartError.set(this.isConflict(error)
+                ? PREORDER_CLOSED_MESSAGE
+                : 'Could not update your cart. Please try again.');
             return false;
         } finally {
             this.cartBusy.set(false);
         }
+    }
+
+    /** The cart endpoints answer 409 once the group is submitted or expired. */
+    private isConflict(error: unknown): boolean {
+        return error instanceof HttpErrorResponse && error.status === 409;
     }
 
     private clearStorage(ctx: string) {

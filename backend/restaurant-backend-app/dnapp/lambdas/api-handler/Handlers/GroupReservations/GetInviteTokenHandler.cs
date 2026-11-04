@@ -16,18 +16,30 @@ public class GetInviteTokenHandler(IGroupReservationService service) : IApiReque
         if (!request.TryGetPathValue("reservationId", out string? reservationId))
             return ResponseBuilder.CreateErrorResponse(404, "Reservation was not found", context.Logger);
 
+        string? userId = UserContextHelper.GetAuthenticatedUserId(request);
+        if (userId is null)
+            return ResponseBuilder.CreateErrorResponse(401, "Unauthorized.", context.Logger);
+
         try
         {
-            GetGroupInviteTokenResponse result = await service.GetGroupReservationInviteTokenAsync(reservationId);
+            GetGroupInviteTokenResponse result = await service.GetGroupReservationInviteTokenAsync(userId, reservationId);
             return ResponseBuilder.CreateJsonResponse(200, result);
         }
         catch (ReservationNotFoundException exception)
         {
             return ResponseBuilder.CreateErrorResponse(404, exception.Message, context.Logger, exception);
         }
+        catch (GroupReservationNotFoundException exception)
+        {
+            return ResponseBuilder.CreateErrorResponse(404, exception.Message, context.Logger, exception);
+        }
+        catch (ActionForbiddenException exception)
+        {
+            return ResponseBuilder.CreateErrorResponse(403, exception.Message, context.Logger);
+        }
         catch(ValidationException exception)
         {
             return ResponseBuilder.CreateErrorCodeResponse(exception);
         }
-    }   
+    }
 }

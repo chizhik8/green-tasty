@@ -61,7 +61,7 @@ Add tests at the layer relevant to the change. Cover success, failure, and bound
 - Guest operations (`POST /guest/sessions`, `/guest/sessions/{guestSessionId}/...`, `GET /guest/invites/{token}`, `GET /guest/groups/{id}/status`) are `NONE`; handlers that act on a session authorize in code via `IGuestAuthorizationService` (guest token in `Authorization: Bearer <token>`).
 - Owner-only operations are `cognito_authorizer`; the handler passes the caller's `sub` to the service, which checks ownership and throws `ActionForbiddenException` (→ 403). For group pre-order, follow the ownership-check pattern in `GuestSessionService.DeleteGuestSessionAsync`; `OrderService` compares `reservation.CustomerId` with the caller.
 
-Known gaps in existing endpoints (for example, the missing ownership check in `GET /reservations/{reservationId}/invite-token`) are tracked in `../../docs/architecture.md`, sections 4.4 and 12; keep them there, not here.
+Known gaps in existing endpoints (for example, `POST /locations`, `POST /tables` and `POST /dishes` don't check roles) are tracked in `../../docs/architecture.md`, sections 4.4 and 12; keep them there, not here.
 
 **Group pre-order model.** A `GroupReservation` belongs to an owner's reservation; each joined guest has a `GuestSession` with a cart that can be submitted. `GuestSession` also supports an owner session (`IsOwnerSession`, `OwnerUserId`); whether any code path creates one yet is tracked in `../../docs/architecture.md`, section 4.4.
 

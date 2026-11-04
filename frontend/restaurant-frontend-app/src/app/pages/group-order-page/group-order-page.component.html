@@ -36,6 +36,9 @@
     @case ('not-found') {
       <p class="state">Group reservation not found</p>
     }
+    @case ('inactive') {
+      <p class="state">This pre-order session has expired or is no longer active.</p>
+    }
     @case ('error') {
       <div class="state">
         <p>Couldn't load the group pre-order.</p>

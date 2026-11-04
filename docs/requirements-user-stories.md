@@ -9,13 +9,17 @@ All stories belong to the **Order Management** epic. The order in this file foll
 | [US1](#us1) | Initiation of Group Pre-order Session | Customer (Owner) | Do first |
 | [US10](#us10) | Guest Joining a Group Pre-order Session via Link | Guest (Visitor, unregistered) | Do first |
 | [US11](#us11) | Guest Reservation and Menu View | Guest (Visitor, unregistered) | Do first |
-| [US12](#us12) | Owner Viewing Consolidated Group Pre-order | Customer (Owner) | Do first |
-| [US14](#us14) | Owner Closing Group Pre-order | Customer (Owner) | Do first |
+| [US12](#us12) | Owner Reviewing Group Pre-order | Customer (Owner) | Do first |
+| [US13](#us13) | Owner Removing a Guest from Group Pre-order | Customer (Owner) | Good fit |
+| [US14](#us14) | Owner Submitting Group Pre-order to the Restaurant | Customer (Owner) | Do first |
 | [US15](#us15) | Guest Editing Own Pre-order | Guest (Visitor, unregistered) | Do first |
 | [US16](#us16) | Waiter Viewing Table Group Pre-order | Waiter | Do first |
 | [US17](#us17) | Guest Paying Own Share (Split the bill) | Guest (Visitor, unregistered) | Do first |
 
 Cross-references between stories are written as `(USxx)`. US10 and US11 use legacy references: `US_Owner_1` means US1, `US_G10` means US10.
+
+
+> US12–US15 are aligned with the Figma mock-up (FOR DEVELOPERS → Owner Flow), `homework-frontend.md` and `homework-backend.md`. Where they differ from earlier versions of these stories, the mock-up and the homework take priority. In US16–US17, "closed" means the group status "Submitted" (US14).
 
 ---
 
@@ -95,214 +99,212 @@ Cross-references between stories are written as `(USxx)`. US10 and US11 use lega
 
 ## US12
 
-**Owner Viewing Consolidated Group Pre-order**
+**Owner Reviewing Group Pre-order**
 
 - **Epic:** Order Management
 - **Role:** Customer (Owner)
 - **Priority:** Do first
-- **Description:** As the group owner, I want to see on one screen the pre-orders of all guests in my group with their dishes, each guest's total and the table total, so that I can check who chose what before closing the order and don't have to collect orders by hand.
+- **Sources:** Figma EPAM IT Marathon 6.0 → FOR DEVELOPERS → Owner Flow (`homework-design/01-owner-review.png`), `homework-frontend.md` levels 1–3, `homework-backend.md` level 1 (`GET /guest/groups/{groupReservationId}/sessions`).
+- **Description:** As the reservation owner, I want to see on one screen what every participant of my group has chosen, whether they have submitted their cart, and the total that will go to the restaurant, so that I can check the group order before sending it.
 
 ### Pre-conditions
 
-- The Customer is logged in.
-- The Customer is the reservation owner, the reservation has the status "Reserved".
-- The reservation's guests_count is ≥ 2, the group session has been created (US1).
+- The Customer is logged in and is the reservation owner.
+- The reservation has the status "Reserved" and guests_count ≥ 2; the group reservation has been created (US1).
 
 ### Acceptance Criteria
 
-**AC1**
+**AC1. Entry point**
 
 - **Given** the reservation has the status "Reserved" and guests_count ≥ 2
-- **When** the owner opens this reservation in "Reservations"
-- **Then** they see the [ View Group Pre-order ] button to open the consolidated view.
+- **When** the owner opens "Reservations"
+- **Then** the reservation card shows the [ Group Pre-Order ] button
+- **And** the button opens the page `/reservations/{reservationId}/group-order`.
+- For guests_count = 1 the button is not shown.
 
-**AC2**
+**AC2. Header**
 
-- **Given** guests have joined the group session via the link (US10)
-- **When** the owner opens the consolidated view
-- **Then** they see each guest under the name the guest entered when joining (US10)
-- **And** the number of guests on the screen equals the number of guests who joined.
+- **Given** the owner has opened the Group Pre-Order page
+- **Then** they see the title "Group Pre-Order" with the group status badge (US14 AC5), the restaurant address, date, time range and "N of M guests" with icons
+- **And** N is the number of participants including the owner, M is the reservation's guest count.
 
-**AC3**
+**AC3. Participant cards**
 
-- **Given** a guest has added dishes to their personal subcart from US11
-- **When** the owner opens the consolidated view
-- **Then** under the guest's name they see each of the guest's dishes with its name and price from the restaurant menu.
+- **Given** participants have joined the group via the link (US10)
+- **When** the owner opens the page
+- **Then** they see one card per participant
+- **And** the owner's own card is titled "My Pre-Order", every other card "Guest: {name}" with the name the guest entered when joining.
 
-**AC4**
+**AC4. Dish rows and subtotal**
 
-- **Given** a guest's personal subcart contains dishes
-- **When** the owner opens the consolidated view
-- **Then** the guest total is shown next to the guest's name and equals the sum of the prices of all their available dishes.
+- **Given** a participant has dishes in their cart
+- **Then** each dish row shows the dish photo (or the first letter of the dish name on a green circle), the name, the quantity as text ("× 2") and the line price = price × quantity
+- **And** the card shows "Subtotal" = sum of the line prices.
+- Editing controls from the mock-up (−/+, trash icon, "Edit my Pre-Order") are not part of this story: the owner can't change other participants' carts.
 
-**AC5**
+**AC5. Cart status**
 
-- **Given** at least one guest has dishes in their personal subcart
-- **When** the owner opens the consolidated view
-- **Then** they see the table total, which equals the sum of all guest totals.
+- **Given** the page is open
+- **Then** every card shows the cart status as text: "Submitted" if the participant has submitted their cart (US15 AC8), otherwise "Still choosing"
+- **And** the status is not conveyed by colour only.
 
-**AC6**
+**AC6. Empty cart**
 
-- **Given** a guest has joined but their personal subcart is empty
-- **When** the owner opens the consolidated view
-- **Then** the guest is listed with the label "No dishes selected yet" and their total is 0.
+- **Given** a participant has joined but has no dishes
+- **Then** their card shows "No dishes yet" and "Subtotal $0.00".
 
-**AC7**
+**AC7. Not-submitted participants warning**
 
-- **Given** no guest has joined yet
-- **When** the owner opens the consolidated view
-- **Then** they see the message "No guests have joined yet" and the table total is 0.
+- **Given** K ≥ 1 participants haven't submitted their cart
+- **Then** a yellow banner shows "K participants haven't submitted their cart yet — their dishes won't be included in the order" ("1 participant hasn't submitted…" for K = 1).
 
-**AC8**
+**AC8. Consolidated pre-order**
 
-- **Given** the owner has the consolidated view open
-- **When** a guest adds or removes a dish
-- **Then** the guest's personal subcart, the guest total and the table total update immediately on the owner's screen, without a manual refresh or reopening the screen.
+- **Given** the page is open
+- **Then** the "Consolidated pre-order" block lists the dishes of submitted carts only, with the same dishes merged by dish id: "{name} × {total quantity}" and the line total
+- **And** if nobody has added dishes, it shows "Participants haven't added any dishes yet"
+- **And** if dishes exist only in not-submitted carts, it shows "No submitted carts yet".
 
-**AC9**
+**AC9. Grand Total**
 
-- **Given** the group order is not closed yet
-- **And** a dish in a guest's personal subcart got the status "On Stop" after it was added
-- **When** the owner opens the consolidated view
-- **Then** the dish is marked as unavailable
-- **And** its price is included in neither the guest total nor the table total.
+- **Given** the page is open
+- **Then** "Grand Total" (green) equals the sum of the consolidated pre-order, i.e. submitted carts only
+- **And** it is not the `total` field of the API, which counts all carts. Example: submitted carts $540, all carts $760 → Grand Total $540.
 
-**AC10**
+**AC10. Loading, error and not found states**
 
-- **Given** the group order is closed (US14)
-- **When** the owner opens the consolidated view
-- **Then** they see the final order items and totals with the label "Pre-order closed"
-- **And** the items and totals are fixed as of closure and no longer change
-- **And** there is no close order button.
+- While data is loading, the page shows a loading state.
+- If loading fails, the page shows "Couldn't load the group pre-order" and a [ Try again ] button; Try again does not start a second background timer.
+- If the reservation or the group reservation doesn't exist (404), the page shows "Group reservation not found".
 
-**AC11**
+**AC11. Background sync**
 
-- **Given** the reservation is cancelled, completed or moved to a different restaurant
-- **When** the owner tries to open the consolidated view
-- **Then** they see a message that the group session is inactive and can't change the order.
+- **Given** the group status is "Open"
+- **Then** the page refreshes the participants and the status every 15 seconds without a full-page loader
+- **And** shows "Updated at HH:mm:ss" and a [ Refresh ] button that syncs immediately
+- **And** if a background refresh fails, the page keeps the last data and shows "Couldn't refresh. Showing data from HH:mm:ss" without an error toast
+- **And** a new request doesn't start while the previous one is still running
+- **And** the sync stops after the pre-order is submitted (US14) and when the owner leaves the page.
 
-**AC12**
+**AC12. Access**
 
-- **Given** the reservation's guests_count = 1
-- **When** the owner opens the reservation in "Reservations"
-- **Then** there is no [ View Group Pre-order ] button.
+- Only the reservation owner can see the page and call `GET /guest/groups/{groupReservationId}/sessions`.
+- A user who is not logged in is redirected to sign in.
 
-**AC13**
+**AC13. Layout**
 
-- **Given** the user is not the reservation owner, including a guest who joined via the link
-- **When** they try to open the consolidated view
-- **Then** they have no access to the consolidated view.
+- The page doesn't break at 375 px width.
+- Semantics: one `<h1>`, participants as a list, each card as an `<article>`.
 
-**AC14**
+---
 
-- **Given** the owner is viewing the consolidated view
-- **When** a new guest joins the session
-- **Then** the guest immediately appears in the list without a manual screen refresh.
+## US13
 
-**AC15**
+**Owner Removing a Guest from Group Pre-order**
 
-- **Given** the owner is viewing the consolidated view and the group order is not closed yet
-- **When** a dish in a guest's personal subcart gets the status "On Stop"
-- **Then** the dish is immediately marked as unavailable and excluded from totals.
+- **Epic:** Order Management
+- **Role:** Customer (Owner)
+- **Priority:** Good fit (level 3 bonus)
+- **Sources:** Figma `homework-design/03-remove-guest.png`, `homework-frontend.md` level 3 bonus, `homework-backend.md` level 3 (`DELETE /guest/groups/{groupReservationId}/sessions/{guestSessionId}`).
+- **Description:** As the reservation owner, I want to remove a participant and their pre-order from my group, so that dishes of someone who isn't coming don't get into the table order.
 
-**AC16**
+### Pre-conditions
 
-- **Given** the owner is viewing the consolidated view
-- **When** the system closes the order at the default deadline
-- **Then** the screen immediately shows "Pre-order closed" and the close button disappears.
+- The owner has the Group Pre-Order page open (US12).
+- The group status is "Open".
 
-**AC17**
+### Acceptance Criteria
 
-- **Given** the owner is viewing the consolidated view
-- **When** the reservation is cancelled, completed or moved to a different restaurant
-- **Then** the screen immediately shows that the group session is inactive.
+**AC1. Remove action**
 
-**AC18**
+- Every "Guest: {name}" card has a [ Remove Guest ] link with the accessible name "Remove {name}".
+- The owner's "My Pre-Order" card has no Remove Guest link.
+- After the pre-order is submitted (US14), Remove Guest is not shown.
 
-- **Given** automatic updates are temporarily unavailable, for example the internet connection is lost
-- **When** the owner is viewing the consolidated view
-- **Then** they see a warning that the data may be out of date and can refresh the screen manually.
+**AC2. Confirmation**
 
-**AC19**
+- **When** the owner clicks [ Remove Guest ]
+- **Then** a "Remove Guest" dialog opens with the text "Are you sure you want to remove **{name}** and their pre-order from this reservation? This action cannot be undone." and the buttons [ Cancel ] and [ Remove Guest ].
 
-- **Given** the group order is open
-- **When** the owner opens the consolidated view
-- **Then** they see the payment mode toggle "Single payment / Split the bill", with "Single payment" selected by default.
+**AC3. Cancel**
 
-**AC20**
+- **When** the owner clicks [ Cancel ] or closes the dialog
+- **Then** nothing changes.
 
-- **Given** the group order is open
-- **When** the owner selects "Split the bill"
-- **Then** the mode is saved, and each guest pays for their own dishes: online or at the restaurant (US17).
+**AC4. Successful removal**
 
-**AC21**
+- **When** the owner confirms
+- **Then** the guest session is deleted
+- **And** the participant list, "N of M guests", the warning banner, the consolidated pre-order and the Grand Total are updated from the snapshot returned by the API (participants and total).
 
-- **Given** the group order is closed (US14)
-- **When** the owner opens the consolidated view
-- **Then** they see the selected payment mode, which can no longer be changed.
+**AC5. Errors**
+
+- Only the owner can delete a guest session.
+- If the guest session doesn't belong to this group reservation, the API returns 400; if it doesn't exist, 404.
+- On an error the data on the screen doesn't change, the error is shown once as a toast, and the owner can try again.
 
 ---
 
 ## US14
 
-**Owner Closing Group Pre-order**
+**Owner Submitting Group Pre-order to the Restaurant**
 
 - **Epic:** Order Management
 - **Role:** Customer (Owner)
 - **Priority:** Do first
-- **Description:** As the group owner, I want to close the group pre-order once everyone has chosen their dishes, so that the restaurant receives the final table order before we arrive.
+- **Sources:** Figma `homework-design/01-owner-review.png`, `02-sent-to-restaurant.png`, `homework-frontend.md` level 2, `homework-backend.md` level 2 (`GET /reservations/{reservationId}/guest-session-id`, `POST /group-reservations/{groupReservationId}/submit`).
+- **Description:** As the reservation owner, I want to send the consolidated pre-order to the restaurant once the participants have submitted their carts, so that the restaurant receives one final order for the table.
 
 ### Pre-conditions
 
-- The Customer is logged in and is the reservation owner.
-- The reservation has the status "Reserved", the group session has been created (US1).
-- The group order is not closed yet.
+- The owner has the Group Pre-Order page open (US12).
+- The group status is "Open".
 
 ### Acceptance Criteria
 
-**AC1**
+**AC1. Submit button**
 
-- **Given** the group order is open
-- **When** the owner opens the consolidated view (US12)
-- **Then** they see the [ Close Pre-order ] button.
+- **Given** the group status is "Open"
+- **Then** below the Grand Total there is a wide green [ Submit Pre-Order ] button.
 
-**AC2**
+**AC2. Disabled button**
 
-- **Given** the group order is open
-- **When** the owner clicks [ Close Pre-order ]
-- **Then** the order gets the status "Closed"
-- **And** the consolidated view shows the final order items and totals with the label "Pre-order closed".
+- The button is disabled (grey) when the submitted carts contain no dishes, and while the submit request is running.
 
-**AC3**
+**AC3. Confirmation**
 
-- **Given** the owner hasn't closed the order
-- **When** the default deadline before the reservation time is reached
-- **Then** the system automatically closes the order with the same result as closure by the owner.
+- **When** the owner clicks [ Submit Pre-Order ]
+- **Then** a "Submit Pre-Order" dialog opens with the text "Send the consolidated pre-order of {Grand Total} to the restaurant? Carts that are not submitted won't be included." and the buttons [ Cancel ] and [ Submit ]
+- **And** [ Cancel ] closes the dialog without changes.
 
-**AC4**
+**AC4. Submitting**
 
-- **Given** the group order is closed
-- **When** a guest opens the link or their personal subcart
-- **Then** they see their dishes and the message "Pre-order is closed, changes are no longer possible"
-- **And** they can't add, remove or change dishes.
+- **When** the owner clicks [ Submit ]
+- **Then** the system takes only submitted guest sessions, merges the same dishes by dish id, adds them to the reservation's order, sets the order status to "SubmittedByCustomer" and the group status to "Submitted"
+- **And** a double click sends the request only once.
 
-**AC5**
+**AC5. Status badge**
 
-- **Given** the group order is closed
-- **When** the waiter opens the table order (US16)
-- **Then** they see it as final.
+- Group status "Open" is shown as the badge "Collecting pre-orders", "Submitted" as "Sent to Restaurant".
 
-**AC6**
+**AC6. After submitting**
 
-- **Given** the group order is closed
-- **When** the owner opens the consolidated view
-- **Then** there is no [ Close Pre-order ] button.
+- **Then** the owner sees the toast "Pre-order sent to the restaurant" and the badge "Sent to Restaurant"
+- **And** the page becomes read-only: no Remove Guest, no Refresh, the background sync stops
+- **And** the [ Submit Pre-Order ] button stays visible but disabled (grey), as in the mock-up
+- **And** when the owner opens the page again, they see the same read-only state.
 
-**AC7**
+**AC7. Errors**
 
-- **Given** the reservation is cancelled, completed or moved to a different restaurant
-- **When** the owner opens the reservation
-- **Then** there is no [ Close Pre-order ] button, because the group session is inactive.
+- Only the owner can submit.
+- Reservation or group reservation not found → 404.
+- No submitted guest sessions → 400; submitted sessions contain no dishes → 400; the reservation's order is not found → 400.
+- The API error message is shown once as a toast; the page doesn't break and the owner can press Submit again.
+
+### Out of scope for this release
+
+- Automatic closing at a default deadline, the "Closed" / "Pre-order closed" state, the payment mode toggle (US17) and dishes "On Stop" on the owner's page are not in the mock-up or the homework and are moved to later releases.
+- Statuses from the Figma page that are not in the homework ("New pre-order added", "Confirmed" with dishes rejected by the waiter) belong to later stories (US16).
 
 ---
 
@@ -313,13 +315,13 @@ Cross-references between stories are written as `(USxx)`. US10 and US11 use lega
 - **Epic:** Order Management
 - **Role:** Guest (Visitor, unregistered)
 - **Priority:** Do first
-- **Description:** As a guest, I want to view and change my pre-order until the group order is closed, so that the table gets exactly what I want and the waiter doesn't have to fix the order on site.
+- **Description:** As a guest, I want to view and change my pre-order until the owner submits the group pre-order to the restaurant (US14), so that the table gets exactly what I want and the waiter doesn't have to fix the order on site.
 
 ### Pre-conditions
 
 - The guest has joined the group session (US10).
 - The reservation has the status "Reserved".
-- The group order is not closed yet.
+- The group pre-order hasn't been submitted to the restaurant yet (group status "Open").
 
 ### Acceptance Criteria
 
@@ -356,17 +358,24 @@ Cross-references between stories are written as `(USxx)`. US10 and US11 use lega
 
 **AC6**
 
-- **Given** the group order was closed by the owner or at the deadline (US14)
+- **Given** the owner has submitted the group pre-order to the restaurant (group status "Submitted", US14)
 - **When** the guest tries to change the personal subcart
 - **Then** changes are not available and the guest sees the message "Pre-order is closed, changes are no longer possible".
 
 **AC7**
 
 - **Given** the guest opened the personal subcart while the order was open
-- **And** the order was closed after that
+- **And** the owner submitted the group pre-order after that
 - **When** the guest adds or removes a dish
 - **Then** the change is not saved
-- **And** the guest sees the message "Pre-order is closed, changes are no longer possible" and their personal subcart as it was at closure.
+- **And** the guest sees the message "Pre-order is closed, changes are no longer possible" and their personal subcart as it was at submission.
+
+**AC8**
+
+- **Given** the guest's personal subcart contains at least one dish
+- **When** the guest clicks [ Submit Pre-Order ] in the cart
+- **Then** the cart gets the status "Submitted" and the owner sees "Submitted" on the guest's card (US12 AC5)
+- **And** only submitted carts are included in the order sent to the restaurant (US14 AC4).
 
 ---
 

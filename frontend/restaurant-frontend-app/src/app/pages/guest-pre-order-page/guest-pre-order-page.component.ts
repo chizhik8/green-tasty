@@ -1,4 +1,5 @@
 import { Component, computed, effect, inject, signal } from '@angular/core';
+import { CurrencyPipe } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { RouterLink } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
@@ -9,7 +10,7 @@ import { GuestMenuDish } from '@app/services/guest-sessions/guest-sessions.servi
 import { DishCardComponent } from '@app/shared/custom-components/dish-card/dish-card.component';
 import { MainCoverImageComponent } from '@app/shared/custom-components/main-cover-image/main-cover-image.component';
 import { ToastService } from '@app/services/toast/toast.service';
-import { GuestPreorderStore } from './state/guest-preorder.store';
+import { GuestPreorderStore, PREORDER_CLOSED_MESSAGE } from './state/guest-preorder.store';
 
 import { GuestNameModalComponent } from './ui/guest-name-modal/guest-name-modal.component';
 import { GuestCartDrawerComponent } from './ui/guest-cart-drawer/guest-cart-drawer.component';
@@ -21,6 +22,7 @@ import { GuestPreorderSubmittedComponent } from './ui/guest-preorder-submitted/g
     templateUrl: './guest-pre-order-page.component.html',
     styleUrl: './guest-pre-order-page.component.scss',
     imports: [
+        CurrencyPipe,
         RouterLink,
         DishCardComponent,
         MainCoverImageComponent,
@@ -35,6 +37,7 @@ export class GuestPreOrderPageComponent {
     private readonly toast = inject(ToastService);
 
     readonly store = inject(GuestPreorderStore);
+    readonly closedMessage = PREORDER_CLOSED_MESSAGE;
     readonly isCartOpen = signal(false);
     readonly selectedCategory = signal<string | null>(null);
     readonly selectedSort = signal<'recommended' | 'price-asc' | 'price-desc'>('recommended');

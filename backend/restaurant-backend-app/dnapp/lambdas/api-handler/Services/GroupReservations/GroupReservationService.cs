@@ -37,18 +37,25 @@ public class GroupReservationService(
         GroupReservation groupReservation = await groupReservationRepository.GetGroupReservationByTokenAsync(token)
             ?? throw new GroupReservationNotFoundException();
 
-        if (groupReservation.Status != GroupReservationStatus.Open)
+        if (groupReservation.Status == GroupReservationStatus.Closed)
             throw new GroupReservationExpiredException();
+
+        bool isOpen = groupReservation.Status == GroupReservationStatus.Open;
 
         Task<Reservation?> reservationTask = reservationRepository.GetReservationByIdAsync(groupReservation.ReservationId);
         // Owner sessions are not joined guests and do not count toward the guest limit.
-        Task<int> joinedGuestsCountTask = guestSessionRepository.CountJoinedGuestsByGroupReservationIdAsync(groupReservation.GroupReservationId);
+        // A submitted group accepts no more guests, so its joined guests are not counted.
+        Task<int> joinedGuestsCountTask = isOpen
+            ? guestSessionRepository.CountJoinedGuestsByGroupReservationIdAsync(groupReservation.GroupReservationId)
+            : Task.FromResult(0);
 
         Reservation reservation = await reservationTask ?? throw new ValidationException("Associated reservation not found.");
         int joinedGuestsCount = await joinedGuestsCountTask;
 
-        if (joinedGuestsCount + 1 >= reservation.GuestCount)
-            throw new GuestLimitExceededException();
+        // Same rule as GuestSessionService.CreateGuestSessionAsync: one place is reserved for the owner.
+        int availableSpots = isOpen
+            ? Math.Max(0, reservation.GuestCount - 1 - joinedGuestsCount)
+            : 0;
 
         Table table = await tableRepository.GetTableAsync(reservation.TableId)
             ?? throw new InvalidOperationException("Associated table not found.");
@@ -71,7 +78,9 @@ public class GroupReservationService(
             reservation.EndTime,
             reservation.GuestCount,
             table.TableNumber,
-            inviterName);
+            inviterName,
+            groupReservation.Status,
+            availableSpots);
     }
 
     public async Task<GroupReservation> GetGroupReservationAsync(string groupReservationId)
@@ -130,10 +139,13 @@ public class GroupReservationService(
         await groupReservationRepository.SaveGroupReservationAsync(groupReservation);
     }
 
-    public async Task<GetGroupInviteTokenResponse> GetGroupReservationInviteTokenAsync(string reservationId)
+    public async Task<GetGroupInviteTokenResponse> GetGroupReservationInviteTokenAsync(string userId, string reservationId)
     {
         var reservation = await reservationRepository.GetReservationByIdAsync(reservationId)
             ?? throw new ReservationNotFoundException($"Reservation {reservationId} was not found.");
+
+        // Checked before anything else, so a non-owner learns nothing about the reservation's state.
+        GroupPreOrderGuards.EnsureReservationOwner(reservation, userId);
 
         if (reservation.GuestCount < 2)
             throw new ValidationException("Retrieving invitation token for the reservation with only one guest is not permitted.");
@@ -141,14 +153,14 @@ public class GroupReservationService(
         if (reservation.Status != ReservationStatus.Reserved)
             throw new GroupReservationExpiredException("The group reservation is expired.");
 
-        GroupReservation groupReservation = (await groupReservationRepository.GetByReservationIdAsync(reservationId))!;
-
-        if (groupReservation.Status == GroupReservationStatus.Submitted)
-            throw new GroupReservationSubmittedException();
+        GroupReservation groupReservation = await groupReservationRepository.GetByReservationIdAsync(reservationId)
+            ?? throw new GroupReservationNotFoundException();
 
         if (groupReservation.Status == GroupReservationStatus.Closed)
             throw new GroupReservationExpiredException();
 
+        // A submitted group still returns its token: the owner page reopens through the invite,
+        // and guests who open the link see that the pre-order is closed.
         return new GetGroupInviteTokenResponse(groupReservation.ReservationToken);
     }
 
