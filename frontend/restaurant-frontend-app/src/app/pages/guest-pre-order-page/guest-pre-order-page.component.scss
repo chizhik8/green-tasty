@@ -236,7 +236,8 @@
     }
 }
 
-.invite-retry {
+.invite-retry,
+.invite-state {
     display: grid;
     min-height: 55vh;
     align-content: center;
@@ -269,4 +270,26 @@
             opacity: 0.65;
         }
     }
+}
+
+/* Read-only cart in the "Pre-order is closed" block */
+.closed-cart {
+    width: min(100%, 28rem);
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.closed-cart-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    width: min(100%, 28rem);
+    padding: 0.5rem 0;
+    color: color.$neutral-900;
+}
+
+.closed-cart-total {
+    margin: 0;
+    border-top: 1px solid color.$neutral-200;
 }

@@ -1364,6 +1364,9 @@ Response: `200 OK`
 
 - `participants`: one entry per session of the group. The owner session, if it exists, comes first with `type: "Owner"` and the owner's Cognito `given_name` (the stored session name if the user or attribute is not found); guests follow with `type: "Guest"` and their guest name.
 - `items`: cart lines with the full dish and `quantity`. A line whose dish no longer exists is omitted.
+  - Guest: the lines of the guest session's cart.
+  - Owner: the lines of the reservation's active pre-order (the owner's cart, `/orders` endpoints; a `Cancelled` order is ignored), not the dishes stored in the owner session. No active order: `items: []`, `total: 0`, `isSubmitted: false`. While the group is `Open` or `Closed` the order's lines are shown as they are. After the group is `Submitted` the order also contains the merged carts of the submitted guests, so the quantities of the submitted guest sessions are subtracted per dish and lines left at zero or below are omitted. If the order is edited through the cart after the group submit, the owner's lines are off by that edit.
+- `isSubmitted`: guest: the guest session is submitted. Owner: the order status is `SubmittedByCustomer` or `Submitted` (`false` for `Created` or no active order).
 - `total` (participant): sum of `price × quantity` over items whose dish `state` is `Available`; items in another state are listed but not counted.
 - `total` (top level): sum of the participant totals. A group without sessions returns `participants: []` and `total: 0`.
 
@@ -1377,7 +1380,7 @@ Removes a guest's session from the group and returns the updated group snapshot.
 
 Authorization: Cognito ID token; only the reservation owner (`reservation.customerId == sub`).
 
-Response: `200 OK`. The snapshot of the remaining sessions, in the same format and with the same rules as `GET /guest/groups/{groupReservationId}/sessions`.
+Response: `200 OK`. The snapshot of the remaining sessions, in the same format and with the same rules as `GET /guest/groups/{groupReservationId}/sessions`, including the owner participant built from the reservation's active pre-order.
 
 Errors, in the order they are checked (nothing is deleted on an error):
 - `401` `{ "error": "Unauthorized." }`: no `sub` claim.

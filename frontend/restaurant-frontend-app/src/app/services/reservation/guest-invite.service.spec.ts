@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { SKIP_ERROR_TOAST } from '@app/auth/skip-error-toast.context';
 import { GroupInviteToken, GuestInvite } from '@app/models/reservations/guest-invite.model';
 import { API_BASE_URL } from '@app/shared/config/api-base-url.token';
 import { GuestInviteService } from './guest-invite.service';
@@ -64,6 +65,8 @@ describe('GuestInviteService', () => {
       MaxGuestCount: 2,
       TableNumber: 3,
       InviterName: 'Kateryna',
+      Status: 'Open',
+      AvailableSpots: 1,
     };
     let result: GuestInvite | undefined;
 
@@ -73,6 +76,14 @@ describe('GuestInviteService', () => {
     expect(req.request.method).toBe('GET');
     req.flush(invite);
     expect(result).toEqual(invite);
+  });
+
+  it('marks the invite request silent only when asked', () => {
+    service.getInvite$('loud').subscribe();
+    service.getInvite$('quiet', { silent: true }).subscribe();
+
+    expect(httpMock.expectOne(`${BASE_URL}/guest/invites/loud`).request.context.get(SKIP_ERROR_TOAST)).toBeFalse();
+    expect(httpMock.expectOne(`${BASE_URL}/guest/invites/quiet`).request.context.get(SKIP_ERROR_TOAST)).toBeTrue();
   });
 
   it('encodes the token in the URL', () => {

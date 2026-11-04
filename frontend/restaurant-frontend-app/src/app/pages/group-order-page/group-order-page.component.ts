@@ -54,7 +54,7 @@ export class GroupOrderPageComponent implements OnInit {
   private mutationCount = 0;
   private refreshing = false;
 
-  readonly viewState = signal<'loading' | 'ready' | 'not-found' | 'error'>('loading');
+  readonly viewState = signal<'loading' | 'ready' | 'not-found' | 'inactive' | 'error'>('loading');
   readonly invite = signal<GuestInvite | null>(null);
   readonly participants = signal<Participant[]>([]);
   readonly ownerSessionId = signal<string | null>(null);
@@ -140,10 +140,7 @@ export class GroupOrderPageComponent implements OnInit {
           this.viewState.set('ready');
           this.startSync();
         },
-        error: (error: unknown) => {
-          const notFound = error instanceof HttpErrorResponse && error.status === 404;
-          this.viewState.set(notFound ? 'not-found' : 'error');
-        },
+        error: (error: unknown) => this.viewState.set(this.loadErrorState(error)),
       });
   }
 
@@ -231,6 +228,20 @@ export class GroupOrderPageComponent implements OnInit {
         // The interceptor already shows the API error as a toast.
         error: () => undefined,
       });
+  }
+
+  /** A forbidden reservation is shown as not found; an inactive session can't be retried. */
+  private loadErrorState(error: unknown): 'not-found' | 'inactive' | 'error' {
+    if (!(error instanceof HttpErrorResponse)) {
+      return 'error';
+    }
+    if (error.status === 404 || error.status === 403) {
+      return 'not-found';
+    }
+    if (error.status === 400 && error.error?.errorCode === 'GroupReservationExpired') {
+      return 'inactive';
+    }
+    return 'error';
   }
 
   private isRemovable(participant: Participant): boolean {

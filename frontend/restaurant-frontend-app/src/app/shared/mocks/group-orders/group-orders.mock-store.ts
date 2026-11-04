@@ -24,6 +24,9 @@ export const DEMO_INVITE: GuestInvite = {
   MaxGuestCount: 5,
   TableNumber: 7,
   InviterName: 'Yevhenii',
+  Status: 'Open',
+  // MaxGuestCount 5 − місце власника − 3 гості, що вже приєдналися.
+  AvailableSpots: 1,
 };
 
 export class MockHttpError {

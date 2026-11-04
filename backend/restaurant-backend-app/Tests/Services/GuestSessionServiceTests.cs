@@ -10,6 +10,7 @@ using APIHandler.Repositories.Auth;
 using APIHandler.Repositories.Dishes;
 using APIHandler.Repositories.GroupReservations;
 using APIHandler.Repositories.GuestSessions;
+using APIHandler.Repositories.Orders;
 using APIHandler.Repositories.Reservations;
 using APIHandler.Repositories.Tables;
 using APIHandler.Services.GuestSessions;
@@ -29,6 +30,7 @@ public class GuestSessionServiceTests
     private readonly Mock<IReservationRepository> _mockReservationRepository = new();
     private readonly Mock<IUserRepository> _mockUserRepository = new();
     private readonly Mock<ITableRepository> _mockTableRepository = new();
+    private readonly Mock<IOrderRepository> _mockOrderRepository = new();
     private readonly GuestSessionService _guestSessionService;
 
     public GuestSessionServiceTests()
@@ -39,7 +41,8 @@ public class GuestSessionServiceTests
             _mockDishRepository.Object,
             _mockReservationRepository.Object,
             _mockUserRepository.Object,
-            _mockTableRepository.Object);
+            _mockTableRepository.Object,
+            _mockOrderRepository.Object);
     }
     [Theory]
     [InlineAutoData(0)]
@@ -1082,7 +1085,9 @@ public class GuestSessionServiceTests
         SetupSessions(
             BuildSession("session-a", "Andrii", lines: [Line("dish1", 1)]),
             BuildSession("session-b", "Olena"),
-            BuildOwnerSession(lines: [Line("dish2", 2)]));
+            BuildOwnerSession());
+        // The owner's lines come from the reservation's order (docs/specs/2026-11-02-owner-preorder-in-group.md).
+        SetupOwnerOrder(BuildOrder(OrderStatus.Created, Line("dish2", 2)));
         SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 30m));
         _mockUserRepository
             .Setup(r => r.GetUserByIdAsync(OwnerUserId))
@@ -1136,6 +1141,402 @@ public class GuestSessionServiceTests
 
         Assert.All(result.Participants, p => Assert.Equal(ParticipantType.Guest, p.Type));
         _mockUserRepository.Verify(r => r.GetUserByIdAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    // ---- Owner participant from the reservation's order (T1–T8, AC1–AC5) ----
+    // Spec: docs/specs/2026-11-02-owner-preorder-in-group.md
+
+    private static Order BuildOrder(OrderStatus status, params OrderItem[] lines) => new()
+    {
+        OrderId = "order-1",
+        CustomerId = OwnerUserId,
+        ReservationId = ReservationId,
+        ReservationAddress = "Main street 1, Table 1",
+        ReservationTime = "Nov 2, 2026, 7:00 p.m. - 8:00 p.m.",
+        Dishes = lines.ToList(),
+        Status = status,
+    };
+
+    // The repository skips Cancelled orders, so "no order" and "only a Cancelled order" both arrive as null.
+    private void SetupOwnerOrder(Order? order) =>
+        _mockOrderRepository
+            .Setup(r => r.GetOrderByReservationIdAsync(ReservationId))
+            .ReturnsAsync(order);
+
+    private void VerifyOwnerOrderReadOnceForReservation()
+    {
+        _mockOrderRepository.Verify(r => r.GetOrderByReservationIdAsync(ReservationId), Times.Once);
+        _mockOrderRepository.Verify(r => r.GetOrderByReservationIdAsync(It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_OpenGroupOrderCreated_OwnerHasOrderLinesTotalAndIsNotSubmitted()
+    {
+        // T1 (AC1, AC2).
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(BuildOwnerSession());
+        SetupOwnerOrder(BuildOrder(OrderStatus.Created, Line("dish1", 2), Line("dish2", 1)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 50m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = Assert.Single(result.Participants);
+        Assert.Equal("owner-session", owner.Id);
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dish1", 2), ("dish2", 1) }, ItemsOf(owner));
+
+        OrderItemResponse dish1Item = owner.Items.Single(i => i.Dish.Id == "dish1");
+        Assert.Equal("Dish dish1", dish1Item.Dish.Name);
+        Assert.Equal(100m, dish1Item.Dish.Price);
+        Assert.Equal(DishStateLabels.Available, dish1Item.Dish.State);
+
+        Assert.Equal(250m, owner.Total);
+        Assert.False(owner.IsSubmitted);
+        Assert.Equal(250m, result.Total);
+
+        VerifyOwnerOrderReadOnceForReservation();
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Created, false)]
+    [InlineData(OrderStatus.SubmittedByCustomer, true)]
+    [InlineData(OrderStatus.Submitted, true)]
+    public async Task GetGroupSessionsAsync_OwnerIsSubmitted_FollowsOrderStatusNotOwnerSessionFlag(OrderStatus orderStatus, bool expectedIsSubmitted)
+    {
+        // T2 (AC2): the owner session's own flag is the opposite value, so only the order status can produce the expected one.
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(BuildSession("owner-session", StoredOwnerName, isOwner: true, isSubmitted: !expectedIsSubmitted));
+        SetupOwnerOrder(BuildOrder(orderStatus, Line("dish1", 1)));
+        SetupDishes(BuildDish("dish1", 100m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = Assert.Single(result.Participants);
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(expectedIsSubmitted, owner.IsSubmitted);
+        Assert.Equal(new[] { ("dish1", 1) }, ItemsOf(owner));
+        Assert.Equal(100m, owner.Total);
+    }
+
+    [Theory]
+    [InlineData(GroupReservationStatus.Open)]
+    [InlineData(GroupReservationStatus.Submitted)]
+    [InlineData(GroupReservationStatus.Closed)]
+    public async Task GetGroupSessionsAsync_NoActiveOrder_OwnerHasNoItemsZeroTotalAndIsNotSubmitted(GroupReservationStatus groupStatus)
+    {
+        // T3 (AC3): the owner session's own dishes must not be used as a fallback.
+        SetupGroupAndReservation(BuildGroup(groupStatus), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(lines: [Line("dish2", 2)]),
+            BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dish1", 1)]),
+            BuildSession("session-b", "Olena", lines: [Line("dish2", 3)]));
+        SetupOwnerOrder(null);
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 30m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Empty(owner.Items);
+        Assert.Equal(0m, owner.Total);
+        Assert.False(owner.IsSubmitted);
+        Assert.Equal(190m, result.Total);
+
+        VerifyOwnerOrderReadOnceForReservation();
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_OwnerSessionHasOtherDishes_OwnerShowsOrderLinesAndSessionDishesAreNotLookedUp()
+    {
+        // T4 (AC5): the owner session's Dishes are not read for the owner participant.
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(lines: [Line("session-dish", 5)]),
+            BuildSession("session-a", "Andrii", lines: [Line("dish2", 1)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Created, Line("dish1", 2)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 50m), BuildDish("session-dish", 7m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dish1", 2) }, ItemsOf(owner));
+        Assert.Equal(200m, owner.Total);
+        Assert.Equal(250m, result.Total);
+
+        // One dish lookup covers the order's and the guests' dishes, without the owner session's dishes.
+        _mockDishRepository.Verify(r => r.GetDishesByIdsAsync(It.IsAny<IEnumerable<string>>()), Times.Once);
+        _mockDishRepository.Verify(
+            r => r.GetDishesByIdsAsync(It.Is<IEnumerable<string>>(ids => ids.ToHashSet().SetEquals(new[] { "dish1", "dish2" }))),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_SubmittedGroup_OwnerLinesAreOrderMinusSubmittedGuestLines()
+    {
+        // T5 (AC4): the order holds the owner's dishA×2, dishB×1 plus the merged guest cart dishB×1, dishC×3.
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dishB", 1), Line("dishC", 3)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Submitted, Line("dishA", 2), Line("dishB", 2), Line("dishC", 3)));
+        SetupDishes(BuildDish("dishA", 10m), BuildDish("dishB", 20m), BuildDish("dishC", 5m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        List<Participant> participants = result.Participants.ToList();
+        Assert.Equal(2, participants.Count);
+
+        Participant owner = participants[0];
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dishA", 2), ("dishB", 1) }, ItemsOf(owner));
+        Assert.Equal(40m, owner.Total);
+        Assert.True(owner.IsSubmitted);
+
+        Participant guest = participants[1];
+        Assert.Equal("session-a", guest.Id);
+        Assert.Equal(new[] { ("dishB", 1), ("dishC", 3) }, ItemsOf(guest));
+        Assert.Equal(35m, guest.Total);
+        Assert.True(guest.IsSubmitted);
+
+        Assert.Equal(75m, result.Total);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_SubmittedGroupDevelopExample_OwnerShowsOnlyOwnThreeDishes()
+    {
+        // AC4 example from develop: owner's 3 dishes ($39.50) + the submitted guest's 3 dishes ($46.49) merged into the order.
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession(
+                "session-a",
+                "Andrii",
+                isSubmitted: true,
+                lines: [Line("caesar-salad", 1), Line("mushroom-soup", 1), Line("tiramisu", 1)]));
+        SetupOwnerOrder(BuildOrder(
+            OrderStatus.Submitted,
+            Line("margherita-pizza", 1),
+            Line("apple-tart", 1),
+            Line("beef-carpaccio", 1),
+            Line("caesar-salad", 1),
+            Line("mushroom-soup", 1),
+            Line("tiramisu", 1)));
+        SetupDishes(
+            BuildDish("margherita-pizza", 14.50m),
+            BuildDish("apple-tart", 9.00m),
+            BuildDish("beef-carpaccio", 16.00m),
+            BuildDish("caesar-salad", 18.99m),
+            BuildDish("mushroom-soup", 12.50m),
+            BuildDish("tiramisu", 15.00m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("apple-tart", 1), ("beef-carpaccio", 1), ("margherita-pizza", 1) }, ItemsOf(owner));
+        Assert.Equal(39.50m, owner.Total);
+
+        Participant guest = result.Participants.Single(p => p.Id == "session-a");
+        Assert.Equal(46.49m, guest.Total);
+
+        Assert.Equal(85.99m, result.Total);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_SubmittedGroupSeveralSubmittedGuests_SubtractsSumPerDishAndDropsLinesBelowZero()
+    {
+        // AC4: dishB = 4 − (1 + 2) = 1; dishC = 1 − 2 = −1 is left out.
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dishB", 1), Line("dishC", 2)]),
+            BuildSession("session-b", "Olena", isSubmitted: true, lines: [Line("dishB", 2)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Submitted, Line("dishA", 1), Line("dishB", 4), Line("dishC", 1)));
+        SetupDishes(BuildDish("dishA", 10m), BuildDish("dishB", 20m), BuildDish("dishC", 5m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dishA", 1), ("dishB", 1) }, ItemsOf(owner));
+        Assert.Equal(30m, owner.Total);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_SubmittedGroupUnsubmittedGuest_GuestDishesAreNotSubtracted()
+    {
+        // T6 (AC4).
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession("session-a", "Andrii", isSubmitted: false, lines: [Line("dishB", 2)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Submitted, Line("dishA", 1), Line("dishB", 2)));
+        SetupDishes(BuildDish("dishA", 10m), BuildDish("dishB", 20m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dishA", 1), ("dishB", 2) }, ItemsOf(owner));
+        Assert.Equal(50m, owner.Total);
+
+        Participant guest = result.Participants.Single(p => p.Id == "session-a");
+        Assert.Equal(new[] { ("dishB", 2) }, ItemsOf(guest));
+        Assert.False(guest.IsSubmitted);
+
+        Assert.Equal(90m, result.Total);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_SubmittedGroupOwnerSessionMarkedSubmitted_OwnerSessionDishesAreNotSubtracted()
+    {
+        // AC4: only guest sessions (not IsOwnerSession) are subtracted.
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(BuildSession("owner-session", StoredOwnerName, isOwner: true, isSubmitted: true, lines: [Line("dishA", 2)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Submitted, Line("dishA", 2)));
+        SetupDishes(BuildDish("dishA", 10m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = Assert.Single(result.Participants);
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dishA", 2) }, ItemsOf(owner));
+        Assert.Equal(20m, owner.Total);
+    }
+
+    [Theory]
+    [InlineData(GroupReservationStatus.Open)]
+    [InlineData(GroupReservationStatus.Closed)]
+    public async Task GetGroupSessionsAsync_GroupNotSubmitted_OrderLinesShownWithoutSubtractingSubmittedGuests(GroupReservationStatus groupStatus)
+    {
+        // AC4 / API contract: Open and Closed groups show the order's lines as they are.
+        SetupGroupAndReservation(BuildGroup(groupStatus), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dishB", 1)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.SubmittedByCustomer, Line("dishA", 2), Line("dishB", 1)));
+        SetupDishes(BuildDish("dishA", 10m), BuildDish("dishB", 20m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = result.Participants.First();
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dishA", 2), ("dishB", 1) }, ItemsOf(owner));
+        Assert.Equal(40m, owner.Total);
+        Assert.Equal(60m, result.Total);
+    }
+
+    [Theory]
+    [InlineData(DishState.OnStop, DishStateLabels.OnStop)]
+    [InlineData(DishState.OutOfStock, DishStateLabels.OutOfStock)]
+    public async Task GetGroupSessionsAsync_OrderLineWithMissingOrUnavailableDish_MissingOmittedUnavailableListedButNotCounted(
+        DishState unavailableState,
+        string expectedStateLabel)
+    {
+        // T7 (AC1).
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(BuildOwnerSession());
+        SetupOwnerOrder(BuildOrder(
+            OrderStatus.Created,
+            Line("dish1", 2),
+            Line("dish-unavailable", 3),
+            Line("deleted-dish", 4)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish-unavailable", 50m, unavailableState));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant owner = Assert.Single(result.Participants);
+        Assert.Equal(new[] { ("dish-unavailable", 3), ("dish1", 2) }, ItemsOf(owner));
+        Assert.Equal(expectedStateLabel, owner.Items.Single(i => i.Dish.Id == "dish-unavailable").Dish.State);
+        Assert.Equal(200m, owner.Total);
+        Assert.Equal(200m, result.Total);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_NoOwnerSession_DoesNotReadOrderAndGuestsAreUnchanged()
+    {
+        // Implementation constraint 3: no owner session → no owner card and no order read.
+        SetupGroupAndReservation(BuildGroup(GroupReservationStatus.Submitted), BuildReservation());
+        SetupSessions(BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dish1", 2)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.Submitted, Line("dish1", 2), Line("dish2", 1)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 50m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant guest = Assert.Single(result.Participants);
+        Assert.Equal(ParticipantType.Guest, guest.Type);
+        Assert.Equal(new[] { ("dish1", 2) }, ItemsOf(guest));
+        Assert.Equal(200m, guest.Total);
+        Assert.Equal(200m, result.Total);
+
+        _mockOrderRepository.Verify(r => r.GetOrderByReservationIdAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetGroupSessionsAsync_OwnerFromOrder_GuestParticipantsUnchangedAndResponseTotalIsSumOfParticipants()
+    {
+        // T8 (AC5): the order shares dishes with the guests; in an Open group neither side changes the other.
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(
+            BuildSession("session-a", "Andrii", isSubmitted: true, lines: [Line("dish1", 2), Line("dish2", 1)]),
+            BuildOwnerSession(),
+            BuildSession("session-b", "Olena", isSubmitted: false, lines: [Line("dish3", 3)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.SubmittedByCustomer, Line("dish1", 1), Line("dish3", 1)));
+        SetupDishes(BuildDish("dish1", 180m), BuildDish("dish2", 50m), BuildDish("dish3", 100m));
+        _mockUserRepository
+            .Setup(r => r.GetUserByIdAsync(OwnerUserId))
+            .ReturnsAsync(BuildUser(("given_name", "Maria")));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        List<Participant> participants = result.Participants.ToList();
+        Assert.Equal(new[] { "owner-session", "session-a", "session-b" }, participants.Select(p => p.Id).ToArray());
+
+        Participant owner = participants[0];
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal("Maria", owner.Name);
+        Assert.Equal(new[] { ("dish1", 1), ("dish3", 1) }, ItemsOf(owner));
+        Assert.Equal(280m, owner.Total);
+        Assert.True(owner.IsSubmitted);
+
+        Participant first = participants[1];
+        Assert.Equal(ParticipantType.Guest, first.Type);
+        Assert.Equal("Andrii", first.Name);
+        Assert.True(first.IsSubmitted);
+        Assert.Equal(new[] { ("dish1", 2), ("dish2", 1) }, ItemsOf(first));
+        Assert.Equal(410m, first.Total);
+
+        Participant second = participants[2];
+        Assert.Equal(ParticipantType.Guest, second.Type);
+        Assert.Equal("Olena", second.Name);
+        Assert.False(second.IsSubmitted);
+        Assert.Equal(new[] { ("dish3", 3) }, ItemsOf(second));
+        Assert.Equal(300m, second.Total);
+
+        Assert.Equal(990m, result.Total);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.Submitted, false)]
+    [InlineData(OrderStatus.Created, true)]
+    public async Task GetGroupSessionsAsync_GuestIsSubmitted_ComesFromGuestSessionNotFromOwnerOrder(OrderStatus orderStatus, bool guestIsSubmitted)
+    {
+        // AC5: the guest's isSubmitted is the session flag, whatever the owner's order status.
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        SetupSessions(
+            BuildOwnerSession(),
+            BuildSession("session-a", "Andrii", isSubmitted: guestIsSubmitted, lines: [Line("dish1", 1)]));
+        SetupOwnerOrder(BuildOrder(orderStatus, Line("dish2", 1)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 50m));
+
+        GetAllSessionsResponse result = await _guestSessionService.GetGroupSessionsAsync(OwnerUserId, GroupId);
+
+        Participant guest = result.Participants.Single(p => p.Id == "session-a");
+        Assert.Equal(ParticipantType.Guest, guest.Type);
+        Assert.Equal(guestIsSubmitted, guest.IsSubmitted);
+        Assert.Equal(new[] { ("dish1", 1) }, ItemsOf(guest));
+        Assert.Equal(100m, guest.Total);
     }
 
     // ---- DeleteGuestSessionAsync (S19, S20, AC15, AC16) ----
@@ -1301,6 +1702,40 @@ public class GuestSessionServiceTests
         Assert.Equal(new[] { ("dish-on-stop", 1), ("dish1", 2) }, ItemsOf(participant));
         Assert.Equal(80m, participant.Total);
         Assert.Equal(80m, result.Total);
+    }
+
+    [Fact]
+    public async Task DeleteGuestSessionAsync_OwnerSessionRemains_OwnerParticipantBuiltFromOrder()
+    {
+        // T9 (AC6): docs/specs/2026-11-02-owner-preorder-in-group.md.
+        SetupGroupAndReservation(BuildGroup(), BuildReservation());
+        GuestSession deleted = BuildSession("session-a", "Andrii", lines: [Line("dish1", 4)]);
+        GuestSession remaining = BuildSession("session-b", "Olena", isSubmitted: true, lines: [Line("dish1", 1)]);
+        _mockGuestSessionRepository.Setup(r => r.GetByGuestSessionId(deleted.Id)).ReturnsAsync(deleted);
+        SetupSessions(deleted, remaining, BuildOwnerSession(lines: [Line("session-dish", 9)]));
+        SetupOwnerOrder(BuildOrder(OrderStatus.SubmittedByCustomer, Line("dish2", 2)));
+        SetupDishes(BuildDish("dish1", 100m), BuildDish("dish2", 30m), BuildDish("session-dish", 7m));
+
+        GetAllSessionsResponse result = await _guestSessionService.DeleteGuestSessionAsync(OwnerUserId, GroupId, deleted.Id);
+
+        _mockGuestSessionRepository.Verify(r => r.DeleteAsync(deleted), Times.Once);
+
+        List<Participant> participants = result.Participants.ToList();
+        Assert.Equal(new[] { "owner-session", "session-b" }, participants.Select(p => p.Id).ToArray());
+
+        Participant owner = participants[0];
+        Assert.Equal(ParticipantType.Owner, owner.Type);
+        Assert.Equal(new[] { ("dish2", 2) }, ItemsOf(owner));
+        Assert.Equal(60m, owner.Total);
+        Assert.True(owner.IsSubmitted);
+
+        Participant guest = participants[1];
+        Assert.Equal(new[] { ("dish1", 1) }, ItemsOf(guest));
+        Assert.Equal(100m, guest.Total);
+        Assert.True(guest.IsSubmitted);
+
+        Assert.Equal(160m, result.Total);
+        VerifyOwnerOrderReadOnceForReservation();
     }
 
     // ---- GetOrCreateOwnerSessionIdAsync (S8–S11, S9a, S9b, AC7, AC8, AC20) ----

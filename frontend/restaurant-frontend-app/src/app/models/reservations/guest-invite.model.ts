@@ -8,6 +8,10 @@ export interface GuestInvite {
   MaxGuestCount: number;
   TableNumber: number;
   InviterName: string;
+  /** A `Closed` group is answered with `400 GroupReservationExpired`, not with an invite. */
+  Status: 'Open' | 'Submitted';
+  /** How many more guests can join now; `0` for a full or `Submitted` group. */
+  AvailableSpots: number;
 }
 
 export interface GroupInviteToken {

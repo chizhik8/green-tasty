@@ -1,5 +1,5 @@
 @if (store.status() === 'submitted') {
-<app-guest-preorder-submitted [items]="store.cartItems()" [total]="store.total()" [guestName]="store.guestName()"
+<app-guest-preorder-submitted [items]="store.cartItems()" [total]="store.total()"
     [invite]="store.invite()" (createNew)="store.createNewPreorder()" />
 } @else {
 @if (store.inviteError() === 'retryable') {
@@ -9,6 +9,29 @@
     <button type="button" [disabled]="store.inviteLoading()" (click)="retryInviteLoad()">
         {{ store.inviteLoading() ? 'Retrying...' : 'Try again' }}
     </button>
+</section>
+} @else if (store.isClosed()) {
+<section class="invite-state" role="status">
+    <h1>{{ closedMessage }}</h1>
+    @if (store.cartItems().length > 0) {
+    <ul class="closed-cart" aria-label="Your pre-order">
+        @for (item of store.cartItems(); track item.dishId) {
+        <li class="closed-cart-row">
+            <span>{{ item.title }} × {{ item.qty }}</span>
+            <span>{{ item.price * item.qty | currency: '$' }}</span>
+        </li>
+        }
+    </ul>
+    <p class="closed-cart-row closed-cart-total">
+        <span>Total</span>
+        <strong>{{ store.total() | currency: '$' }}</strong>
+    </p>
+    }
+</section>
+} @else if (store.isFull()) {
+<section class="invite-state" role="status">
+    <h1>This group is full</h1>
+    <p>All places at this table are already taken. Ask the organizer if you should still join.</p>
 </section>
 } @else {
 <!-- green info strip + cart icon -->
@@ -45,7 +68,7 @@
     </section>
 
     <main class="content-sections">
-        @if (store.menuLoading()) {
+        @if (store.menuLoading() || store.inviteLoading()) {
             <div class="menu-placeholder">Loading menu...</div>
         } @else if (store.menuError()) {
             <div class="menu-placeholder">{{ store.menuError() }}</div>

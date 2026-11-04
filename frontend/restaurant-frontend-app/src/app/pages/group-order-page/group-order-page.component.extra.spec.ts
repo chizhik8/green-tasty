@@ -182,6 +182,50 @@ describe('GroupOrderPageComponent (extra)', () => {
     discardPeriodicTasks();
   }));
 
+  it('400 GroupReservationExpired: inactive text, no Try again, no sync timer', fakeAsync(() => {
+    service.getGroupInvite$.and.returnValue(
+      throwError(() => new HttpErrorResponse({ status: 400, error: { errorCode: 'GroupReservationExpired' } })),
+    );
+    const { element } = create();
+
+    expect(element.textContent).toContain('This pre-order session has expired or is no longer active.');
+    expect(buttonByText(element, 'Try again')).toBeUndefined();
+    tick(SYNC_MS * 2);
+    expect(service.getSessions$).not.toHaveBeenCalled();
+  }));
+
+  it('a 400 with another errorCode keeps the error state with Try again', () => {
+    service.getGroupInvite$.and.returnValue(
+      throwError(() => new HttpErrorResponse({ status: 400, error: { errorCode: 'Unknown' } })),
+    );
+    const { element } = create();
+
+    expect(element.textContent).not.toContain('no longer active');
+    expect(buttonByText(element, 'Try again')).toBeDefined();
+  });
+
+  it('403 is shown like 404: "Group reservation not found"', () => {
+    service.getGroupInvite$.and.returnValue(throwError(() => new HttpErrorResponse({ status: 403 })));
+    const { element } = create();
+
+    expect(element.textContent).toContain('Group reservation not found');
+    expect(buttonByText(element, 'Try again')).toBeUndefined();
+  });
+
+  it('Submitted on the first load: read-only page and no sync timer', fakeAsync(() => {
+    service.getStatus$.and.returnValue(of(status('Submitted')));
+    const { element } = create();
+
+    expect(element.querySelector('.badge')?.textContent?.trim()).toBe('Sent to Restaurant');
+    expect(element.querySelectorAll('app-participant-card').length).toBe(3);
+    expect(element.textContent).toContain('Grand Total');
+    expect(buttonByText(element, 'Submit Pre-Order')).toBeUndefined();
+    expect(buttonByText(element, 'Remove Guest')).toBeUndefined();
+    expect(buttonByText(element, 'Refresh')).toBeUndefined();
+    tick(SYNC_MS * 2);
+    expect(service.getSessions$).toHaveBeenCalledTimes(1);
+  }));
+
   it('a successful Remove Guest clears "Couldn\'t refresh"', fakeAsync(() => {
     service.removeSession$.and.returnValue(of({ participants: SESSIONS.participants.slice(0, 2), total: 540 }));
     const { fixture, element } = create();

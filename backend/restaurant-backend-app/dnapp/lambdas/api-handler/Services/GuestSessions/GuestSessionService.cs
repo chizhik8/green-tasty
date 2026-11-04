@@ -11,6 +11,7 @@ using APIHandler.Repositories.Auth;
 using APIHandler.Repositories.Dishes;
 using APIHandler.Repositories.GroupReservations;
 using APIHandler.Repositories.GuestSessions;
+using APIHandler.Repositories.Orders;
 using APIHandler.Repositories.Reservations;
 using APIHandler.Repositories.Tables;
 using System;
@@ -30,7 +31,8 @@ public class GuestSessionService(
     IDishRepository dishRepository,
     IReservationRepository reservationRepository,
     IUserRepository userRepository,
-    ITableRepository tableRepository) : IGuestSessionService
+    ITableRepository tableRepository,
+    IOrderRepository orderRepository) : IGuestSessionService
 {
     public async Task<bool> IsAuthorizedAsync(string guestSessionToken, string guestSessionId)
     {
@@ -175,11 +177,11 @@ public class GuestSessionService(
 
     public async Task<GetAllSessionsResponse> GetGroupSessionsAsync(string userId, string groupReservationId)
     {
-        (_, Reservation reservation) = await GetOwnedGroupReservationAsync(groupReservationId, userId);
+        (GroupReservation group, Reservation reservation) = await GetOwnedGroupReservationAsync(groupReservationId, userId);
 
         List<GuestSession> sessions = await guestSessionRepository.GetAllByGroupReservationIdAsync(groupReservationId) ?? [];
 
-        return await BuildGroupSnapshotAsync(reservation, sessions);
+        return await BuildGroupSnapshotAsync(group, reservation, sessions);
     }
 
     public async Task<GetAllSessionsResponse> DeleteGuestSessionAsync(string userId, string groupReservationId, string guestSessionId)
@@ -208,7 +210,7 @@ public class GuestSessionService(
             .Where(s => s.Id != session.Id)
             .ToList();
 
-        return await BuildGroupSnapshotAsync(reservation, remainingSessions);
+        return await BuildGroupSnapshotAsync(group, reservation, remainingSessions);
     }
 
     public async Task<OwnerGuestSessionIdResponse> GetOrCreateOwnerSessionIdAsync(string userId, string reservationId)
@@ -269,15 +271,37 @@ public class GuestSessionService(
         return joinedGuestsCount + 1;
     }
 
-    private async Task<GetAllSessionsResponse> BuildGroupSnapshotAsync(Reservation reservation, IReadOnlyCollection<GuestSession> sessions)
+    private async Task<GetAllSessionsResponse> BuildGroupSnapshotAsync(GroupReservation group, Reservation reservation, IReadOnlyCollection<GuestSession> sessions)
     {
         // Stable sort: the owner session comes first, guests keep the repository order.
         List<GuestSession> orderedSessions = sessions
             .OrderByDescending(s => s.IsOwnerSession)
             .ToList();
 
-        string[] dishIds = orderedSessions
+        // The owner orders through the reservation's order (the regular cart), so the owner card comes from it,
+        // not from the owner session. The order is read only when there is an owner card to show.
+        Order? ownerOrder = orderedSessions.Any(s => s.IsOwnerSession)
+            ? await orderRepository.GetOrderByReservationIdAsync(reservation.Id)
+            : null;
+        bool ownerIsSubmitted = ownerOrder?.Status is OrderStatus.SubmittedByCustomer or OrderStatus.Submitted;
+
+        // After the group submit the order also holds the merged carts of the submitted guests,
+        // so their quantities are subtracted per dish and lines left at zero or below are dropped.
+        Dictionary<string, int> mergedGuestQuantities = orderedSessions
+            .Where(s => group.Status == GroupReservationStatus.Submitted && s.IsSubmitted && !s.IsOwnerSession)
             .SelectMany(s => s.Dishes ?? [])
+            .GroupBy(d => d.DishId)
+            .ToDictionary(g => g.Key, g => g.Sum(d => d.Quantity));
+
+        List<OrderItem> ownerLines = (ownerOrder?.Dishes ?? [])
+            .Select(d => new OrderItem { DishId = d.DishId, Quantity = d.Quantity - mergedGuestQuantities.GetValueOrDefault(d.DishId) })
+            .Where(d => d.Quantity > 0)
+            .ToList();
+
+        string[] dishIds = orderedSessions
+            .Where(s => !s.IsOwnerSession)
+            .SelectMany(s => s.Dishes ?? [])
+            .Concat(ownerLines)
             .Select(d => d.DishId)
             .Distinct()
             .ToArray();
@@ -303,7 +327,7 @@ public class GuestSessionService(
             var items = new List<OrderItemResponse>();
             decimal total = 0;
 
-            foreach (OrderItem line in session.Dishes ?? [])
+            foreach (OrderItem line in session.IsOwnerSession ? ownerLines : session.Dishes ?? [])
             {
                 // A cart line whose dish no longer exists is left out of the snapshot.
                 if (!dishesById.TryGetValue(line.DishId, out Dish? dish))
@@ -325,7 +349,7 @@ public class GuestSessionService(
                 ? ownerName
                 : session.GuestName;
 
-            participants.Add(new Participant(session.Id, type, name, items, total, session.IsSubmitted));
+            participants.Add(new Participant(session.Id, type, name, items, total, session.IsOwnerSession ? ownerIsSubmitted : session.IsSubmitted));
         }
 
         return new GetAllSessionsResponse(participants, participants.Sum(p => p.Total));
